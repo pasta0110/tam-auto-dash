@@ -95,9 +95,20 @@ def clean_v(v):
     return v
 
 def get_cat(name):
-    for k in ['매트리스', '파운데이션', '프레임', '판넬01', '판넬05']:
-        if k in str(name): return k
-    return '기타'
+    n = str(name).replace(" ", "").replace("-", "").replace("+", "").strip()
+    if "매트리스" in n:
+        return "매트리스"
+    elif "파운데이션" in n:
+        return "파운데이션"
+    elif "프레임" in n:
+        return "프레임"
+    elif "판넬01" in n:
+        return "판넬01"
+    elif "판넬05" in n:
+        return "판넬05"
+    else:
+        return "기타"
+
 
 order_df, delivery_df = load_data()
 
