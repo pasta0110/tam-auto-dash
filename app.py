@@ -380,43 +380,31 @@ if order_df is not None and delivery_df is not None:
                 line=dict(color='#0077b6', width=3),
                 marker=dict(size=10, symbol='circle'),
                 text=df_combined['지역건수'].astype(int),
-                textposition="top center", # 마커 바로 위에 숫자 배치
-                textfont=dict(size=14, color='#0077b6', font=dict(weight='bold')), # 지역 숫자는 진하고 크게
+                textposition="top center", 
+                # 📍 [수정] 에러가 났던 weight 부분을 삭제하고 깔끔하게 정리했습니다.
+                textfont=dict(size=14, color='#0077b6'), 
                 hovertemplate=f"{sel_v}: %{{y}}건"
             ),
-            secondary_y=True, # 오른쪽 축 사용
+            secondary_y=True,
         )
 
-        # ⚙️ 4. 레이아웃 및 축 설정
+        # ⚙️ 4. 레이아웃 및 축 설정 (이하 동일)
         fig_dual.update_layout(
             title=dict(text=f"<b>📊 {sel_v} 지역 vs 전체 출고 추이 비교</b>", font=dict(size=20)),
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=20, r=20, t=100, b=20), # 상단 여백을 조금 더 늘림 (글자 겹침 방지)
+            margin=dict(l=20, r=20, t=100, b=20),
             height=500,
             font=dict(family="Malgun Gothic")
         )
 
-        # 🚀 [핵심 수정] Y축 범위 자동 조절 (숫자가 들어갈 공간 확보)
-        # 데이터 최대값보다 20~30% 더 높게 범위를 잡습니다.
+        # Y축 범위 자동 조절 로직 (유지)
         if not df_combined.empty:
             max_total = df_combined['전체건수'].max()
             max_region = df_combined['지역건수'].max()
             
-            # 왼쪽 Y축 (전체 막대용) - 20% 여유
-            fig_dual.update_yaxes(
-                title_text="전체 물량 (막대)", 
-                secondary_y=False, 
-                showgrid=False,
-                range=[0, max_total * 1.2] 
-            )
-            # 오른쪽 Y축 (지역 선용) - 30% 여유 (선 그래프 숫자가 더 높으므로)
-            fig_dual.update_yaxes(
-                title_text=f"{sel_v} 물량 (선)", 
-                secondary_y=True, 
-                showgrid=True,
-                range=[0, max_region * 1.3]
-            )
+            fig_dual.update_yaxes(title_text="전체 물량 (막대)", secondary_y=False, showgrid=False, range=[0, max_total * 1.3])
+            fig_dual.update_yaxes(title_text=f"{sel_v} 물량 (선)", secondary_y=True, showgrid=True, range=[0, max_region * 1.4])
 
         st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")
 
