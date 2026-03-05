@@ -95,19 +95,24 @@ def clean_v(v):
     return v
 
 def get_cat(name):
-    n = str(name).replace(" ", "").replace("-", "").replace("+", "").strip()
+    # 1. 대문자 변환 및 특수문자 제거로 비교 데이터 표준화
+    n = str(name).upper().replace(" ", "").replace("-", "").replace("+", "").strip()
+    
+    # 2. 판넬 우선 분류 (상품명에 프레임/매트리스가 섞여 있어도 판넬이 있으면 판넬로!)
+    if "판넬01" in n:
+        return "판넬01"
+    if "판넬05" in n:
+        return "판넬05"
+        
+    # 3. 나머지 기본 품목 분류
     if "매트리스" in n:
         return "매트리스"
-    elif "파운데이션" in n:
+    if "파운데이션" in n:
         return "파운데이션"
-    elif "프레임" in n:
+    if "프레임" in n:
         return "프레임"
-    elif "판넬01" in n:
-        return "판넬01"
-    elif "판넬05" in n:
-        return "판넬05"
-    else:
-        return "기타"
+        
+    return "기타"
 
 
 order_df, delivery_df = load_data()
