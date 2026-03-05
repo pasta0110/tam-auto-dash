@@ -9,7 +9,7 @@ from geopy.geocoders import Nominatim
 from streamlit_folium import folium_static
 import folium
 from folium.plugins import MarkerCluster
-
+from zoneinfo import ZoneInfo
 
 
 
@@ -102,8 +102,10 @@ def get_cat(name):
 order_df, delivery_df = load_data()
 
 if order_df is not None and delivery_df is not None:
-    # --- 기본 설정 ---
-    yesterday = datetime.date.today() - datetime.timedelta(days=1)
+   # --- 기본 설정 (KST 기준) --- 
+    today_kst = datetime.datetime.now(ZoneInfo("Asia/Seoul")).date()
+    yesterday = today_kst - datetime.timedelta(days=1)
+
     y_str, m_key = yesterday.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m')
     m_start = yesterday.replace(day=1)
     m_end = (m_start + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1)
