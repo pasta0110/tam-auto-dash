@@ -333,15 +333,73 @@ if order_df is not None and delivery_df is not None:
 
         st.divider()
 
+        st.divider()
+
+        # 🎯 1. 상세 분석 대상 배송사 선택
         sel_v = st.selectbox("🎯 상세 분석 배송사 선택", [v for v in V_ORDER if v in ana_df['배송사_정제'].unique()])
 
-        v_data = ana_df[ana_df['배송사_정제'] == sel_v].groupby('연월_키').size().reset_index(name='건수')
+        # 📊 2. 데이터 준비 (전체 건수 vs 선택 지역 건수)
+        # 전체 월별 건수 (막대용)
+        total_monthly = ana_df.groupby('연월_키').size().reset_index(name='전체건수')
+        # 선택 지역 월별 건수 (선용)
+        v_monthly = ana_df[ana_df['배송사_정제'] == sel_v].groupby('연월_키').size().reset_index(name='지역건수')
+        
+        # 두 데이터를 연월_키 기준으로 결합
+        df_combined = pd.merge(total_monthly, v_monthly, on='연월_키', how='left').fillna(0)
 
-        fig_line = px.line(v_data, x='연월_키', y='건수', markers=True, text='건수', title=f"{sel_v} 출고 추이")
+        # 📈 3. 이중 축 그래프 생성 (Plotly Graph Objects 사용)
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
 
-        fig_line.update_traces(textposition="top center")
+        # 축이 두 개인 서브플롯 생성
+        fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
 
-        st.plotly_chart(fig_line, use_container_width=True)
+        # ⚪ 배경: 전체 건수 (막대 그래프)
+        fig_dual.add_trace(
+            go.Bar(
+                x=df_combined['연월_키'],
+                y=df_combined['전체건수'],
+                name="전체 출고건수",
+                marker_color='rgba(200, 200, 200, 0.4)', # 눈 안 아픈 연한 회색
+                text=df_combined['전체건수'],
+                textposition='outside',
+                hovertemplate="전체: %{y}건"
+            ),
+            secondary_y=False,
+        )
+
+        # 🔵 강조: 선택 지역 건수 (선 그래프)
+        fig_dual.add_trace(
+            go.Scatter(
+                x=df_combined['연월_키'],
+                y=df_combined['지역건수'],
+                name=f"{sel_v} 건수",
+                mode='lines+markers+text',
+                line=dict(color='#0077b6', width=3),
+                marker=dict(size=10, symbol='circle'),
+                text=df_combined['지역건수'].astype(int),
+                textposition="top center",
+                hovertemplate=f"{sel_v}: %{{y}}건"
+            ),
+            secondary_y=True, # 오른쪽 축 사용
+        )
+
+        # ⚙️ 4. 레이아웃 및 축 설정
+        fig_dual.update_layout(
+            title=dict(text=f"<b>📊 {sel_v} 지역 vs 전체 출고 추이 비교</b>", font=dict(size=20)),
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=20, r=20, t=80, b=20),
+            height=500,
+            font=dict(family="Malgun Gothic")
+        )
+
+        # 왼쪽 Y축 (전체 막대용)
+        fig_dual.update_yaxes(title_text="전체 물량 (막대)", secondary_y=False, showgrid=False)
+        # 오른쪽 Y축 (지역 선용)
+        fig_dual.update_yaxes(title_text=f"{sel_v} 물량 (선)", secondary_y=True, showgrid=True)
+
+        st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")
 
 # --- TAB 3: 당월 출고 예측 ---
     with tab3:
