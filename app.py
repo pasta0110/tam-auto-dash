@@ -360,11 +360,11 @@ if order_df is not None and delivery_df is not None:
                 x=df_combined['연월_키'],
                 y=df_combined['전체건수'],
                 name="전체 출고건수",
-                marker_color='rgba(220, 220, 220, 0.5)', # 더 연한 회색으로 배경화
+                marker_color='rgba(200, 200, 200, 0.4)', # 눈 안 아픈 연한 회색
                 text=df_combined['전체건수'],
-                textposition='outside', # 막대 "바깥 위"
-                cliponaxis=False,
-                textfont=dict(size=11, color='#A9A9A9'), # 회색 숫자는 작게
+                textposition='outside', # 숫자를 막대 위로!
+                cliponaxis=False,       # 숫자가 차트 경계선에서 잘리지 않게 설정
+                textfont=dict(size=12, color='grey'), # 막대 숫자는 은은하게
                 hovertemplate="전체: %{y}건"
             ),
             secondary_y=False,
@@ -378,43 +378,33 @@ if order_df is not None and delivery_df is not None:
                 name=f"{sel_v} 건수",
                 mode='lines+markers+text',
                 line=dict(color='#0077b6', width=3),
-                marker=dict(size=8, symbol='circle'),
+                marker=dict(size=10, symbol='circle'),
                 text=df_combined['지역건수'].astype(int),
-                # 📍 [핵심 변경] 숫자를 마커 "아래(bottom center)"로 내려서 막대 숫자와 엇갈리게 함
-                textposition="bottom center", 
-                textfont=dict(size=13, color='#0077b6'),
+                textposition="top center", 
+                # 📍 [수정] 에러가 났던 weight 부분을 삭제하고 깔끔하게 정리했습니다.
+                textfont=dict(size=14, color='#0077b6'), 
                 hovertemplate=f"{sel_v}: %{{y}}건"
             ),
             secondary_y=True,
         )
 
-        # ⚙️ 레이아웃 설정
+        # ⚙️ 4. 레이아웃 및 축 설정 (이하 동일)
         fig_dual.update_layout(
             title=dict(text=f"<b>📊 {sel_v} 지역 vs 전체 출고 추이 비교</b>", font=dict(size=20)),
             hovermode="x unified",
-            legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
-            margin=dict(l=20, r=20, t=110, b=50), # 아래 위 여백 확보
-            height=550, # 그래프 높이를 조금 더 키움
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=20, r=20, t=100, b=20),
+            height=500,
             font=dict(family="Malgun Gothic")
         )
 
-        # 🚀 [Y축 비율 조정] 숫자가 절대 안 겹치도록 Y축 상단을 아주 넉넉하게 비움
+        # Y축 범위 자동 조절 로직 (유지)
         if not df_combined.empty:
             max_total = df_combined['전체건수'].max()
             max_region = df_combined['지역건수'].max()
             
-            # 왼쪽 Y축: 막대 위 숫자가 놀 공간 확보 (50% 여유)
-            fig_dual.update_yaxes(
-                secondary_y=False, 
-                range=[0, max_total * 1.5], 
-                showgrid=False
-            )
-            # 오른쪽 Y축: 선 그래프가 너무 높이 올라가지 않게 조절 (40% 여유)
-            fig_dual.update_yaxes(
-                secondary_y=True, 
-                range=[0, max_region * 1.4], 
-                showgrid=True
-            )
+            fig_dual.update_yaxes(title_text="전체 물량 (막대)", secondary_y=False, showgrid=False, range=[0, max_total * 1.3])
+            fig_dual.update_yaxes(title_text=f"{sel_v} 물량 (선)", secondary_y=True, showgrid=True, range=[0, max_region * 1.4])
 
         st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")
 
