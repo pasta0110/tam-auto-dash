@@ -398,6 +398,15 @@ if order_df is not None and delivery_df is not None:
             font=dict(family="Malgun Gothic")
         )
 
+        # 🚀 [X축 날짜 형식 수정] Mar 2025 -> 25년 3월
+        fig_dual.update_xaxes(
+            tickformat="%y년 %m월", # 연도 뒤 2자리 + 월 형식
+            dtick="M1",            # 매달 표시
+            title_text="출고 연월"
+        )
+
+
+
         # 🚀 [핵심 수정] Y축 범위 설정
         if not df_combined.empty:
             max_total = df_combined['전체건수'].max()
