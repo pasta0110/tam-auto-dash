@@ -10,6 +10,7 @@ from streamlit_folium import folium_static
 import folium
 from folium.plugins import MarkerCluster
 from zoneinfo import ZoneInfo
+import re
 
 
 
@@ -93,6 +94,17 @@ def clean_v(v):
     for k in ["수도권", "대전", "대구", "부산", "경남", "광주", "전주", "강원"]:
         if k in v: return k
     return v
+
+def get_qty(name):
+    try:
+        name = str(name).lower()
+        # '숫자ea' 패턴 찾기 (예: 2ea, 3ea)
+        match = re.search(r'(\d+)ea', name)
+        if match:
+            return int(match.group(1))
+        return 1  # ea 표시가 없으면 기본 1개로 처리
+    except:
+        return 1
 
 def get_cat(name):
     # 1. 대문자 변환 및 특수문자 제거로 비교 데이터 표준화
