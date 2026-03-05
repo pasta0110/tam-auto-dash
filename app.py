@@ -360,11 +360,15 @@ if order_df is not None and delivery_df is not None:
                 x=df_combined['연월_키'],
                 y=df_combined['전체건수'],
                 name="전체 출고건수",
-                marker_color='rgba(200, 200, 200, 0.4)', # 눈 안 아픈 연한 회색
+                marker_color='rgba(180, 180, 180, 0.5)', # 막대 안 글씨가 잘 보이게 약간 더 진한 회색
                 text=df_combined['전체건수'],
-                textposition='outside', # 숫자를 막대 위로!
-                cliponaxis=False,       # 숫자가 차트 경계선에서 잘리지 않게 설정
-                textfont=dict(size=12, color='grey'), # 막대 숫자는 은은하게
+                
+                # 📍 [핵심 설정] 막대 안쪽(inside) + 끝부분(end) 정렬
+                textposition='inside',
+                insidetextanchor='end', 
+                
+                # 오른쪽으로 밀착시키기 위해 텍스트 폰트와 여백 설정
+                textfont=dict(size=11, color='white', family="Malgun Gothic"),
                 hovertemplate="전체: %{y}건"
             ),
             secondary_y=False,
@@ -380,9 +384,10 @@ if order_df is not None and delivery_df is not None:
                 line=dict(color='#0077b6', width=3),
                 marker=dict(size=10, symbol='circle'),
                 text=df_combined['지역건수'].astype(int),
+                
+                # 📍 선 그래프 숫자는 기존처럼 '중앙 위' 유지 (막대 숫자와 대각선으로 멀어짐)
                 textposition="top center", 
-                # 📍 [수정] 에러가 났던 weight 부분을 삭제하고 깔끔하게 정리했습니다.
-                textfont=dict(size=14, color='#0077b6'), 
+                textfont=dict(size=14, color='#0077b6'),
                 hovertemplate=f"{sel_v}: %{{y}}건"
             ),
             secondary_y=True,
