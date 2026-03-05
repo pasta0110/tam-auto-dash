@@ -398,13 +398,26 @@ if order_df is not None and delivery_df is not None:
             font=dict(family="Malgun Gothic")
         )
 
-        # Y축 범위 자동 조절 로직 (유지)
+        # 🚀 [핵심 수정] Y축 범위 설정
         if not df_combined.empty:
             max_total = df_combined['전체건수'].max()
-            max_region = df_combined['지역건수'].max()
             
-            fig_dual.update_yaxes(title_text="전체 물량 (막대)", secondary_y=False, showgrid=False, range=[0, max_total * 1.3])
-            fig_dual.update_yaxes(title_text=f"{sel_v} 물량 (선)", secondary_y=True, showgrid=True, range=[0, max_region * 1.4])
+            # 왼쪽 Y축 (전체 막대용): 데이터에 따라 유동적으로 30% 여유
+            fig_dual.update_yaxes(
+                title_text="전체 물량 (막대)", 
+                secondary_y=False, 
+                showgrid=False, 
+                range=[0, max_total * 1.3]
+            )
+            
+            # 오른쪽 Y축 (지역 선용): 탬버쌤 요청대로 3000으로 고정!
+            # 이렇게 하면 선 그래프가 차트 중간 아래로 내려와서 안 겹칩니다.
+            fig_dual.update_yaxes(
+                title_text=f"{sel_v} 물량 (선)", 
+                secondary_y=True, 
+                showgrid=True, 
+                range=[0, 3000] 
+            )
 
         st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")
 
