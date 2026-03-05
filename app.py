@@ -95,7 +95,7 @@ def clean_v(v):
     return v
 
 def get_cat(name):
-    for k in ['매트리스', '파운데이션', '프레임']:
+    for k in ['매트리스', '파운데이션', '프레임', '판넬01', '판넬05']:
         if k in str(name): return k
     return '기타'
 
