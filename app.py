@@ -688,60 +688,88 @@ with tab4:
 
         st.divider()
 
-        # 5. 🌐 [신규] 전월 통합 마스터 골든 데이 분석 (요구사항 2 반영)
+       # 5. 🌐 [교정 완료] 역대 모든 달 통합 골든 데이 분석
         st.subheader("🌐 역대 모든 달 통합 골든 데이 분석")
-        st.markdown("데이터에 포함된 모든 월의 데이터를 분석하여 통계적으로 가장 우수한 예측 시점을 도출합니다.")
+        st.markdown("과거 데이터를 개별 월 단위로 정밀 시뮬레이션하여 통계적 골든 데이를 산출합니다.")
         
         all_months = sorted(ana_df['연월_키'].unique())
-        master_summary = {} # {영업일: [정확도들]}
+        master_summary = {} 
 
         for m_key in all_months:
+            # --- [교정 포인트 1] 해당 월의 순수 최종 실적(Target) 확정 ---
+            m_real_final_df = ana_df[ana_df['연월_키'] == m_key]
+            m_final_actual_cnt = len(m_real_final_df)
+            if m_final_actual_cnt == 0: continue # 데이터 없는 월 패스
+
             m_year, m_month = map(int, m_key.split('-'))
             m_start = datetime.date(m_year, m_month, 1)
             if m_month == 12: m_end = datetime.date(m_year, 12, 31)
             else: m_end = datetime.date(m_year, m_month + 1, 1) - datetime.timedelta(days=1)
             
             m_tot_w = get_w_days(m_start, m_end)
-            m_actual_final = len(ana_df[ana_df['연월_키'] == m_key])
-            if m_actual_final == 0: continue
-
+            
             tw = 0
+            # 해당 월의 날짜별로 루프
             for d in pd.date_range(m_start, m_end):
                 if get_w_days(d.date(), d.date()) == 0: continue
                 tw += 1
                 if tw > 20: break
                 
-                # 예측 시뮬레이션
                 d_dt = d.date()
-                d_a = len(ana_df[(ana_df['연월_키'] == m_key) & (ana_df['배송예정일_DT'].dt.date <= d_dt)])
-                d_30 = d_dt - datetime.timedelta(days=30)
-                d_30_w = get_w_days(d_30, d_dt)
-                d_p = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30) & (ana_df['배송예정일_DT'].dt.date <= d_dt)]) / d_30_w if d_30_w > 0 else 0
-                d_pr = d_a + int(d_p * (m_tot_w - tw))
-                d_accuracy = (1 - abs((m_actual_final - d_pr)/m_actual_final)) * 100 if m_actual_final > 0 else 0
+                
+                # --- [교정 포인트 2] 해당 월 내부에서의 누적 실적만 집계 ---
+                # ana_df 전체가 아니라 m_real_final_df(해당월) 안에서만 집계해야 함
+                d_act_cnt = len(m_real_final_df[m_real_final_df['배송예정일_DT'].dt.date <= d_dt])
+                
+                # 페이스 계산 (최근 30일 페이스는 전체 ana_df 사용 가능하나, 시점은 d_dt 기준)
+                d_30_s = d_dt - datetime.timedelta(days=30)
+                d_30_w = get_w_days(d_30_s, d_dt)
+                # 기준일(d_dt) 이전 30일간의 전체 데이터 기반 페이스
+                d_30_data_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= d_dt)])
+                
+                d_p = d_30_data_cnt / d_30_w if d_30_w > 0 else 0
+                
+                # 예측치 계산: (현재 월 누적 실적) + (일평균 페이스 * 남은 영업일)
+                d_pred = d_act_cnt + int(d_p * (m_tot_w - tw))
+                
+                # 정확도 계산: 해당 월의 최종 실적 대비
+                d_accuracy = (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100 if m_final_actual_cnt > 0 else 0
+                
+                # 0~100 사이로 보정 (마이너스 방지)
+                d_accuracy = max(0, d_accuracy)
                 
                 if tw not in master_summary: master_summary[tw] = []
                 master_summary[tw].append(d_accuracy)
 
+        # 평균 및 효율성 계산
         master_history = []
         for w, accs in master_summary.items():
             avg_a = sum(accs) / len(accs)
-            # 효율성 점수: 정확도 90% 이상 가중치 + 빠른 일수 가중치
+            # 요구사항 1 반영: 빠르면서 정확도가 높은 지점 찾기 (효율성)
             eff = avg_a * (1.1 - (w * 0.015))
             master_history.append({"영업일": w, "평균정확도": avg_a, "효율성": eff})
 
         df_master = pd.DataFrame(master_history)
+        
         if not df_master.empty:
-            m_golden = df_master[df_master['평균정확도'] >= 92].sort_values(by='효율성', ascending=False).iloc[0] if not df_master[df_master['평균정확도'] >= 92].empty else df_master.sort_values(by='효율성', ascending=False).iloc[0]
+            # 정확도 90% 이상 중 효율성 1위 (최적 지점)
+            cond = df_master[df_master['평균정확도'] >= 90]
+            if not cond.empty:
+                m_golden = cond.sort_values(by='효율성', ascending=False).iloc[0]
+            else:
+                m_golden = df_master.sort_values(by='효율성', ascending=False).iloc[0]
 
             mm1, mm2 = st.columns([1, 2])
             with mm1:
                 st.metric("🏆 마스터 골든 데이", f"{int(m_golden['영업일'])}영업일차")
                 st.metric("📉 평균 정확도", f"{m_golden['평균정확도']:.1f}%")
-                st.caption(f"ℹ️ {all_months[0]} ~ {all_months[-1]} 전체 분석 결과")
+                st.caption(f"ℹ️ {all_months[0]} ~ {all_months[-1]} ({len(all_months)}개월) 데이터 분석 완료")
+                st.write(f"통계적으로 **{int(m_golden['영업일'])}일차**에 예측할 때 신속성과 정확도의 밸런스가 가장 좋습니다.")
             with mm2:
-                fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, title="역대 영업일별 평균 정확도 추이")
+                fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, 
+                                     title="역대 영업일별 평균 정확도 추이 (%)")
                 fig_master.add_vline(x=m_golden['영업일'], line_dash="dash", line_color="green")
+                fig_master.update_layout(yaxis_range=[min(df_master['평균정확도'].min(), 80), 100]) # 80% 하한선 설정으로 가독성 증대
                 st.plotly_chart(fig_master, use_container_width=True)
         else:
-            st.warning("영업일 데이터를 계산할 수 없습니다.")
+            st.warning("분석할 수 있는 마스터 데이터가 부족합니다.")
