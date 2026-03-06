@@ -23,8 +23,6 @@ def load_and_process():
     ana_df = process_data(delivery_df)
     return order_df, delivery_df, ana_df
 
-
-# ⭐ 여기서 실행
 order_df, delivery_df, ana_df = load_and_process()
 
 
