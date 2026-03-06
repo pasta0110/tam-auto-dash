@@ -688,6 +688,83 @@ with tab4:
 
         st.divider()
 
+# --- [신규 섹션] 3. 역대 일차별 상세 분석 (탬버쌤 제안) ---
+        st.subheader(f"📊 3. 역대 {sel_day_num}영업일차 상세 정확도 추이")
+        st.markdown(f"매월 **{sel_day_num}영업일차** 시점의 예측이 실제 결과와 얼마나 일치했는지 시계열로 분석합니다.")
+
+        # 25년 5월 이후 데이터 필터링 (초창기 제외)
+        target_months = [m for m in sorted(ana_df['연월_키'].unique()) if m >= "2025-05"]
+        
+        daily_trend_data = []
+
+        for m_key in target_months:
+            m_df = ana_df[ana_df['연월_키'] == m_key]
+            m_final_act = len(m_df)
+            if m_final_act == 0: continue
+
+            # 해당 월의 정보 설정
+            m_y, m_m = map(int, m_key.split('-'))
+            m_s = datetime.date(m_y, m_m, 1)
+            if m_m == 12: m_e = datetime.date(m_y, 12, 31)
+            else: m_e = datetime.date(m_y, m_m + 1, 1) - datetime.timedelta(days=1)
+            m_total_w = get_w_days(m_s, m_e)
+
+            # 선택된 sel_day_num에 해당하는 날짜 찾기
+            m_days = pd.date_range(m_s, m_e)
+            t_dt, t_w = None, 0
+            for d in m_days:
+                if get_w_days(d.date(), d.date()) > 0:
+                    t_w += 1
+                    if t_w == sel_day_num:
+                        t_dt = d.date()
+                        break
+            
+            if t_dt:
+                # 해당 시점 실적 및 페이스 계산
+                d_act = len(m_df[m_df['배송예정일_DT'].dt.date <= t_dt])
+                d_30_s = t_dt - datetime.timedelta(days=30)
+                d_30_w = get_w_days(d_30_s, t_dt)
+                d_30_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= t_dt)])
+                
+                d_pace = d_30_cnt / d_30_w if d_30_w > 0 else 0
+                d_pred = d_act + int(d_pace * (m_total_w - sel_day_num))
+                d_acc = (1 - abs((m_final_act - d_pred) / m_final_act)) * 100 if m_final_act > 0 else 0
+                d_acc = max(0, min(100, d_acc))
+
+                daily_trend_data.append({
+                    "연월": m_key,
+                    "실제결과": f"{m_final_act}건",
+                    "예측치": f"{d_pred}건",
+                    "정확도(%)": round(d_acc, 1)
+                })
+
+        if daily_trend_data:
+            df_daily = pd.DataFrame(daily_trend_data)
+            
+            # 화면 구성 (표와 그래프)
+            col_left, col_right = st.columns([1, 2])
+            
+            with col_left:
+                st.dataframe(df_daily.set_index("연월"), height=300)
+            
+            with col_right:
+                fig_daily = px.line(df_daily, x="연월", y="정확도(%)", markers=True, 
+                                    title=f"역대 {sel_day_num}일차 정확도 변동 추이",
+                                    text="정확도(%)")
+                fig_daily.update_traces(textposition="top center")
+                fig_daily.add_hline(y=90, line_dash="dot", line_color="red", annotation_text="90% 기준선")
+                fig_daily.update_layout(yaxis_range=[min(df_daily["정확도(%)"].min()-5, 80), 105])
+                st.plotly_chart(fig_daily, use_container_width=True)
+            
+            avg_daily_acc = df_daily["정확도(%)"].mean()
+            st.info(f"💡 **분석 결과:** {sel_day_num}영업일차의 역대 평균 정확도는 **{avg_daily_acc:.1f}%**이며, "
+                    f"가장 높았던 달은 **{df_daily.loc[df_daily['정확도(%)'].idxmax(), '연월']}**입니다.")
+        else:
+            st.warning("선택하신 영업일에 대한 분석 데이터가 충분하지 않습니다.")
+
+        st.divider()
+
+
        # 5. 🌐 [최종 교정] 25년 5월 이후 데이터 통합 마스터 골든 데이 분석
         st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~현재)")
         st.markdown("사업 안정화 단계인 **2025년 5월 이후** 실적만을 분석하여 신뢰도 높은 최적 시점을 도출합니다.")
