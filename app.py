@@ -31,7 +31,7 @@ with tab2:
     render_delivery(ana_df)
 
 with tab3:
-    render_tab3(order_df, delivery_df)
+    render_prediction(ana_df, yesterday, yesterday_str, m_key)
 
 with tab4:
     render_tab4(order_df, delivery_df)
