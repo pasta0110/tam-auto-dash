@@ -739,11 +739,32 @@ with tab4:
         if daily_trend_data:
             df_daily = pd.DataFrame(daily_trend_data)
             c_l, c_r = st.columns([1, 2])
-            with c_l: st.dataframe(df_daily.set_index("연월"), height=300)
+            
+            with c_l: 
+                # 1. height=None으로 설정하여 스크롤 없이 전체 행 출력
+                st.dataframe(df_daily.set_index("연월"), height=None, use_container_width=True)
+            
             with c_r:
-                fig_daily = px.line(df_daily, x="연월", y="정확도(%)", markers=True, title=f"역대 {sel_day_num}일차 정확도 추이", text="정확도(%)")
-                fig_daily.update_layout(yaxis_range=[85, 105]) # 90%대 확인을 위해 하한선 조정
+                fig_daily = px.line(df_daily, x="연월", y="정확도(%)", markers=True, 
+                                    title=f"📅 역대 {sel_day_num}일차 정확도 추이", 
+                                    text="정확도(%)")
+                
+                # 2. X축 날짜 형식을 '25년 05월'로 변경 및 매월 표시 설정
+                fig_daily.update_xaxes(
+                    tickformat="%y년 %m월",
+                    dtick="M1",      # 모든 달을 표시
+                    tickangle=0      # 글자를 똑바로 정렬
+                )
+                
+                # 텍스트 위치 및 가독성 설정
+                fig_daily.update_traces(textposition="top center")
+                fig_daily.update_layout(
+                    yaxis_range=[85, 105],
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                
                 st.plotly_chart(fig_daily, use_container_width=True)
+                
             st.info(f"💡 {sel_day_num}일차 역대 평균 정확도: **{df_daily['정확도(%)'].mean():.1f}%**")
 
         st.divider()
