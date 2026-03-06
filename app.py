@@ -648,7 +648,7 @@ with col4:
             for d in month_days:
                 if get_w_days(d.date(), d.date()) == 0: continue
                 temp_w_count += 1
-                if temp_w_count > 20: break # 12영업일 확장 분석
+                if temp_w_count > 24: break # 12영업일 확장 분석
                 
                 d_date = d.date()
                 d_act = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= sim_m_start) & (ana_df['배송예정일_DT'].dt.date <= d_date)])
