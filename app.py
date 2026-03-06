@@ -688,28 +688,29 @@ with tab4:
 
         st.divider()
 
-# --- [신규 섹션] 3. 역대 일차별 상세 분석 (탬버쌤 제안) ---
+# --- [신규/수정 섹션] 3. 역대 일차별 상세 분석 (당월 제외 반영) ---
         st.subheader(f"📊 3. 역대 {sel_day_num}영업일차 상세 정확도 추이")
-        st.markdown(f"매월 **{sel_day_num}영업일차** 시점의 예측이 실제 결과와 얼마나 일치했는지 시계열로 분석합니다.")
+        st.markdown(f"매월 **{sel_day_num}영업일차** 시점의 정확도를 분석합니다. (25년 5월 ~ 전월까지)")
 
-        # 25년 5월 이후 데이터 필터링 (초창기 제외)
-        target_months = [m for m in sorted(ana_df['연월_키'].unique()) if m >= "2025-05"]
+        # 📅 현재 날짜 기준으로 '당월' 키 생성 (예: '2026-03')
+        import datetime
+        current_month_key = datetime.date.today().strftime('%Y-%m')
+
+        # 🔍 필터링: 25년 5월 이후이면서 + 현재 진행 중인 달(당월)보다 작은 달만!
+        target_months = [m for m in sorted(ana_df['연월_키'].unique()) if "2025-05" <= m < current_month_key]
         
         daily_trend_data = []
-
         for m_key in target_months:
-            m_df = ana_df[ana_df['연월_키'] == m_key]
-            m_final_act = len(m_df)
+            m_real_df = ana_df[ana_df['연월_키'] == m_key]
+            m_final_act = len(m_real_df)
             if m_final_act == 0: continue
 
-            # 해당 월의 정보 설정
             m_y, m_m = map(int, m_key.split('-'))
             m_s = datetime.date(m_y, m_m, 1)
             if m_m == 12: m_e = datetime.date(m_y, 12, 31)
             else: m_e = datetime.date(m_y, m_m + 1, 1) - datetime.timedelta(days=1)
             m_total_w = get_w_days(m_s, m_e)
 
-            # 선택된 sel_day_num에 해당하는 날짜 찾기
             m_days = pd.date_range(m_s, m_e)
             t_dt, t_w = None, 0
             for d in m_days:
@@ -720,127 +721,83 @@ with tab4:
                         break
             
             if t_dt:
-                # 해당 시점 실적 및 페이스 계산
-                d_act = len(m_df[m_df['배송예정일_DT'].dt.date <= t_dt])
+                d_act = len(m_real_df[m_real_df['배송예정일_DT'].dt.date <= t_dt])
                 d_30_s = t_dt - datetime.timedelta(days=30)
                 d_30_w = get_w_days(d_30_s, t_dt)
                 d_30_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= t_dt)])
-                
                 d_pace = d_30_cnt / d_30_w if d_30_w > 0 else 0
                 d_pred = d_act + int(d_pace * (m_total_w - sel_day_num))
-                d_acc = (1 - abs((m_final_act - d_pred) / m_final_act)) * 100 if m_final_act > 0 else 0
-                d_acc = max(0, min(100, d_acc))
-
+                d_acc = max(0, min(100, (1 - abs((m_final_act - d_pred) / m_final_act)) * 100)) if m_final_act > 0 else 0
+                
                 daily_trend_data.append({
-                    "연월": m_key,
-                    "실제결과": f"{m_final_act}건",
-                    "예측치": f"{d_pred}건",
+                    "연월": m_key, 
+                    "실제결과": f"{m_final_act}건", 
+                    "예측치": f"{d_pred}건", 
                     "정확도(%)": round(d_acc, 1)
                 })
 
         if daily_trend_data:
             df_daily = pd.DataFrame(daily_trend_data)
-            
-            # 화면 구성 (표와 그래프)
-            col_left, col_right = st.columns([1, 2])
-            
-            with col_left:
-                st.dataframe(df_daily.set_index("연월"), height=300)
-            
-            with col_right:
-                fig_daily = px.line(df_daily, x="연월", y="정확도(%)", markers=True, 
-                                    title=f"역대 {sel_day_num}일차 정확도 변동 추이",
-                                    text="정확도(%)")
-                fig_daily.update_traces(textposition="top center")
-                fig_daily.add_hline(y=90, line_dash="dot", line_color="red", annotation_text="90% 기준선")
-                fig_daily.update_layout(yaxis_range=[min(df_daily["정확도(%)"].min()-5, 80), 105])
+            c_l, c_r = st.columns([1, 2])
+            with c_l: st.dataframe(df_daily.set_index("연월"), height=300)
+            with c_r:
+                fig_daily = px.line(df_daily, x="연월", y="정확도(%)", markers=True, title=f"역대 {sel_day_num}일차 정확도 추이", text="정확도(%)")
+                fig_daily.update_layout(yaxis_range=[85, 105]) # 90%대 확인을 위해 하한선 조정
                 st.plotly_chart(fig_daily, use_container_width=True)
-            
-            avg_daily_acc = df_daily["정확도(%)"].mean()
-            st.info(f"💡 **분석 결과:** {sel_day_num}영업일차의 역대 평균 정확도는 **{avg_daily_acc:.1f}%**이며, "
-                    f"가장 높았던 달은 **{df_daily.loc[df_daily['정확도(%)'].idxmax(), '연월']}**입니다.")
-        else:
-            st.warning("선택하신 영업일에 대한 분석 데이터가 충분하지 않습니다.")
+            st.info(f"💡 {sel_day_num}일차 역대 평균 정확도: **{df_daily['정확도(%)'].mean():.1f}%**")
 
         st.divider()
 
-
-       # 5. 🌐 [최종 교정] 25년 5월 이후 데이터 통합 마스터 골든 데이 분석
-        st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~현재)")
-        st.markdown("사업 안정화 단계인 **2025년 5월 이후** 실적만을 분석하여 신뢰도 높은 최적 시점을 도출합니다.")
+       # --- 5. 🌐 역대 통합 골든 데이 분석 (전체 평균) ---
+        st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~전월)")
         
-        # --- [교정 포인트] 2025년 5월 이전(초창기) 데이터 제외 ---
-        all_months_raw = sorted(ana_df['연월_키'].unique())
-        all_months = [m for m in all_months_raw if m >= "2025-05"] 
-        
-        if len(all_months) > 0:
+        if len(target_months) > 0:
             master_summary = {} 
-
-            for m_key in all_months:
+            for m_key in target_months:
                 m_real_final_df = ana_df[ana_df['연월_키'] == m_key]
                 m_final_actual_cnt = len(m_real_final_df)
-                if m_final_actual_cnt == 0: continue 
-
                 m_year, m_month = map(int, m_key.split('-'))
                 m_start = datetime.date(m_year, m_month, 1)
                 if m_month == 12: m_end = datetime.date(m_year, 12, 31)
                 else: m_end = datetime.date(m_year, m_month + 1, 1) - datetime.timedelta(days=1)
-                
                 m_tot_w = get_w_days(m_start, m_end)
                 
                 tw = 0
                 for d in pd.date_range(m_start, m_end):
                     if get_w_days(d.date(), d.date()) == 0: continue
                     tw += 1
-                    if tw > 20: break
-                    
+                    if tw > 24: break
                     d_dt = d.date()
-                    # 해당 월 내 누적 실적만 정밀 집계
                     d_act_cnt = len(m_real_final_df[m_real_final_df['배송예정일_DT'].dt.date <= d_dt])
-                    
-                    # 페이스 계산 (시점 d_dt 기준 최근 30일 데이터 전체 활용)
                     d_30_s = d_dt - datetime.timedelta(days=30)
                     d_30_w = get_w_days(d_30_s, d_dt)
                     d_30_data_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= d_dt)])
-                    
                     d_p = d_30_data_cnt / d_30_w if d_30_w > 0 else 0
                     d_pred = d_act_cnt + int(d_p * (m_tot_w - tw))
-                    
-                    # 정확도 계산 및 0~100 사이 보정
-                    d_accuracy = (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100 if m_final_actual_cnt > 0 else 0
-                    d_accuracy = max(0, min(100, d_accuracy))
-                    
+                    d_acc = max(0, min(100, (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100)) if m_final_actual_cnt > 0 else 0
                     if tw not in master_summary: master_summary[tw] = []
-                    master_summary[tw].append(d_accuracy)
+                    master_summary[tw].append(d_acc)
 
-            # 통계 데이터 가공
             master_history = []
             for w, accs in master_summary.items():
                 avg_a = sum(accs) / len(accs)
-                # 효율성 점수: 정확도가 높고 일수가 낮을수록 가점 (1.1 - w*0.015 계수 사용)
                 eff = avg_a * (1.1 - (w * 0.015))
                 master_history.append({"영업일": w, "평균정확도": avg_a, "효율성": eff})
 
             df_master = pd.DataFrame(master_history)
-            
             if not df_master.empty:
-                # 정확도 90% 이상 조건 중 효율성 최고점, 없으면 전체 중 최고점
                 cond = df_master[df_master['평균정확도'] >= 90]
                 m_golden = cond.sort_values(by='효율성', ascending=False).iloc[0] if not cond.empty else df_master.sort_values(by='효율성', ascending=False).iloc[0]
-
+                
                 mm1, mm2 = st.columns([1, 2])
                 with mm1:
                     st.metric("🏆 마스터 골든 데이", f"{int(m_golden['영업일'])}영업일차")
                     st.metric("📈 평균 정확도", f"{m_golden['평균정확도']:.1f}%")
-                    st.caption(f"📅 분석 대상: {all_months[0]} ~ {all_months[-1]}")
-                    st.info("💡 초창기(25년 2~4월) 저성장 데이터를 제외하여 예측 신뢰도를 높였습니다.")
+                    st.caption(f"📅 분석 범위: {target_months[0]} ~ {target_months[-1]}")
                 with mm2:
-                    fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, 
-                                         title="통계적 예측 정확도 추이 (25년 5월 이후)")
+                    fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, title="역대 영업일별 평균 정확도")
                     fig_master.add_vline(x=m_golden['영업일'], line_dash="dash", line_color="green")
-                    # 데이터 안정화 이후이므로 하한선을 85% 정도로 잡아 가독성 향상
-                    y_min = max(0, df_master['평균정확도'].min() - 5)
-                    fig_master.update_layout(yaxis_range=[y_min, 105])
+                    fig_master.update_layout(yaxis_range=[85, 105])
                     st.plotly_chart(fig_master, use_container_width=True)
             else:
                 st.warning("분석 가능한 데이터 범위가 부족합니다.")
