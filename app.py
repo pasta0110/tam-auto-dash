@@ -3,7 +3,7 @@ import streamlit as st
 from data_loader import load_data
 
 from tabs.tab1_summary import render_tab1
-from tabs.tab2_delivery import render_tab2
+from tabs.tab2_delivery import render_delivery
 from tabs.tab3_prediction import render_tab3
 from tabs.tab4_validation import render_tab4
 from tabs.tab5_map import render_tab5
@@ -28,7 +28,7 @@ with tab1:
     render_tab1(order_df, delivery_df)
 
 with tab2:
-    render_tab2(order_df, delivery_df)
+    render_delivery(ana_df)
 
 with tab3:
     render_tab3(order_df, delivery_df)
