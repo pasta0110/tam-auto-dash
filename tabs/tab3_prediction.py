@@ -8,6 +8,9 @@ def render_prediction(ana_df, yesterday, yesterday_str, m_key):
 
     st.title("🚀 당월 출고 최종 예측 (최근 30일 페이스)")
 
+    st.write("현재 컬럼 목록")
+    st.write(ana_df.columns)
+
     m_start = yesterday.replace(day=1)
     m_end = (m_start + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1)
 
