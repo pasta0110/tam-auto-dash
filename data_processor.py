@@ -4,6 +4,8 @@ def process_data(df):
 
     df = df.copy()
 
+    st.write(ana_df.columns)
+
     # 배송예정일 datetime 변환
     if "배송예정일" in df.columns:
         df["배송예정일_DT"] = pd.to_datetime(df["배송예정일"], errors="coerce")
