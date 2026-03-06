@@ -2,22 +2,24 @@ import pandas as pd
 
 def process_data(df):
 
-    df = df.copy()
+    # 날짜 컬럼 처리
+    if "배송예정일" in df.columns:
+        df["배송예정일_DT"] = pd.to_datetime(df["배송예정일"], errors="coerce")
 
-    # 날짜 컬럼 찾기
-    date_col = None
+    if "출고일" in df.columns:
+        df["출고일_DT"] = pd.to_datetime(df["출고일"], errors="coerce")
 
-    for c in ["배송예정일", "배송일", "출고일"]:
-        if c in df.columns:
-            date_col = c
-            break
+    # 분석 기준 날짜 선택
+    if "배송예정일_DT" in df.columns:
+        base_date = df["배송예정일_DT"]
+    elif "출고일_DT" in df.columns:
+        base_date = df["출고일_DT"]
+    else:
+        base_date = None
 
-    # 날짜 처리
-    if date_col:
-        df["배송예정일_DT"] = pd.to_datetime(df[date_col], errors="coerce")
-
-        # 월 키 (YYYY-MM)
-        df["연월_키"] = df["배송예정일_DT"].dt.strftime("%Y-%m")
+    # 연월 키 생성
+    if base_date is not None:
+        df["연월_키"] = base_date.dt.strftime("%y년 %m월")
 
     # 배송사 정제
     if "배송사" in df.columns:
