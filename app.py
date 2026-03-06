@@ -2,10 +2,10 @@ import streamlit as st
 
 from data_loader import load_data
 
-from tabs.tab1_summary import render_tab1
+from tabs.tab1_summary import render_summary
 from tabs.tab2_delivery import render_delivery
 from tabs.tab3_prediction import render_prediction
-from tabs.tab4_validation import render_tab4
+from tabs.tab4_validation import render_validation
 from tabs.tab5_map import render_tab5
 
 st.set_page_config(
@@ -25,7 +25,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 ])
 
 with tab1:
-    render_tab1(order_df, delivery_df)
+     render_summary(order_df, delivery_df)
 
 with tab2:
     render_delivery(ana_df)
@@ -34,7 +34,7 @@ with tab3:
     render_prediction(ana_df, yesterday, yesterday_str, m_key)
 
 with tab4:
-    render_tab4(order_df, delivery_df)
+    render_validation(ana_df)
 
 with tab5:
     render_tab5(order_df, delivery_df)

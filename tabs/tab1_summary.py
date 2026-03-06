@@ -1,6 +1,6 @@
 import streamlit as st
 
-def render_tab1(order_df, delivery_df):
+def render_summary(order_df, delivery_df):
 
     st.title("🏛️ 종합 현황")
 
