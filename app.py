@@ -6,7 +6,6 @@ from tabs.tab1_summary import render_summary
 from tabs.tab2_delivery import render_delivery
 from tabs.tab3_prediction import render_prediction
 from tabs.tab4_validation import render_validation
-from tabs.tab5_map import render_tab5
 
 st.set_page_config(
     page_title="청호나이스 현황판",
@@ -16,12 +15,11 @@ st.set_page_config(
 
 order_df, delivery_df = load_data()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📋 1. 종합 현황",
     "📈 2. 배송사별 분석",
     "🚀 3. 당월 출고 예측",
-    "🔍 4. 예측 모델 검증",
-    "📍 5. 배송 지도"
+    "🔍 4. 예측 모델 검증"
 ])
 
 with tab1:
@@ -35,6 +33,3 @@ with tab3:
 
 with tab4:
     render_validation(ana_df)
-
-with tab5:
-    render_tab5(order_df, delivery_df)
