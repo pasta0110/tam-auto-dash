@@ -768,9 +768,9 @@ with tab4:
 
         st.divider()
 
-       # --- 5. 🌐 역대 통합 골든 데이 분석 (탬버쌤의 '최단기 고효율' 논리 적용) ---
+       # --- 5. 🌐 역대 통합 골든 데이 분석 (탬버쌤의 '가성비 임계점' 논리 최종판) ---
         st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~전월)")
-        st.markdown("전체 기간을 종합하여 **월말 수준의 정확도를 가장 빠르게 달성하는 시점**을 도출합니다.")
+        st.markdown("전체 기간을 분석하여 **최고 정확도 수준에 가장 먼저 도달하는 가성비 시점**을 도출합니다.")
         
         if len(target_months) > 0:
             master_summary = {} 
@@ -797,12 +797,10 @@ with tab4:
                     d_p = d_30_data_cnt / d_30_w if d_30_w > 0 else 0
                     d_pred = d_act_cnt + int(d_p * (m_tot_w - tw))
                     
-                    # 오차 범위를 고려한 정확도 계산
                     d_acc = max(0, min(100, (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100)) if m_final_actual_cnt > 0 else 0
                     if tw not in master_summary: master_summary[tw] = []
                     master_summary[tw].append(d_acc)
 
-            # 통계 가공
             master_history = []
             for w, accs in master_summary.items():
                 avg_a = sum(accs) / len(accs)
@@ -811,27 +809,28 @@ with tab4:
             df_master = pd.DataFrame(master_history)
 
             if not df_master.empty:
-                # 🏆 [탬버쌤 논리 핵심] 
-                # 1. 정확도를 소수점 첫째 자리까지 반올림하여 '유사 그룹' 생성 (예: 95.77% -> 95.8%)
-                df_master['정확도_그룹'] = df_master['평균정확도'].round(1)
+                # 🏆 [탬버쌤 논리 반영 핵심 로직]
+                # 1. 역대 영업일 중 도달한 '최고 정확도'를 찾음 (예: 24일차의 98.6%)
+                max_acc = df_master['평균정확도'].max()
                 
-                # 2. 정확도 그룹은 높은 순(Descending), 영업일은 빠른 순(Ascending)으로 정렬
-                # 이렇게 하면 19일차(95.9%)와 2일차(95.8%)가 거의 동등하게 경쟁할 때 2일차를 우선순위로 둡니다.
-                sorted_df = df_master.sort_values(by=['정확도_그룹', '영업일'], ascending=[False, True])
+                # 2. 최고 정확도와 비교해 '오차 범위 3%p 이내'인 날들을 모두 후보군으로 선정
+                # (예: 98.6% - 3% = 95.6% 이상인 모든 날짜가 후보)
+                tolerance = 3.0
+                candidate_days = df_master[df_master['평균정확도'] >= (max_acc - tolerance)]
                 
-                # 최상단 데이터 추출
-                m_golden = sorted_df.iloc[0]
+                # 3. 후보군(합격권) 중에서 '영업일'이 가장 빠른 날을 마스터 골든 데이로 선정
+                # 이렇게 하면 24일차보다 먼저 95.6%를 넘긴 '2일차'가 최종 선택됩니다.
+                m_golden = candidate_days.sort_values(by='영업일', ascending=True).iloc[0]
                 
                 mm1, mm2 = st.columns([1, 2])
                 with mm1:
                     st.metric("🏆 마스터 골든 데이", f"{int(m_golden['영업일'])}영업일차")
                     st.metric("📈 기대 정확도", f"{m_golden['평균정확도']:.1f}%")
                     st.caption(f"📅 분석 범위: {target_months[0]} ~ {target_months[-1]}")
-                    st.success(f"💡 분석 결과, **{int(m_golden['영업일'])}영업일차**에 이미 최종 실적의 {m_golden['평균정확도']:.1f}% 수준의 예측 신뢰도를 확보하는 것으로 나타났습니다.")
+                    st.info(f"💡 월말 최고 정확도({max_acc:.1f}%) 대비 차이가 {tolerance}% 이내인 가장 빠른 시점을 도출했습니다.")
                 
                 with mm2:
                     fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, title="역대 영업일별 평균 정확도 추이")
-                    # 골든데이 강조
                     fig_master.add_vline(x=m_golden['영업일'], line_dash="dash", line_color="green")
                     fig_master.add_annotation(x=m_golden['영업일'], y=m_golden['평균정확도'], text="Golden Day", showarrow=True, arrowhead=1)
                     fig_master.update_layout(yaxis_range=[85, 105])
