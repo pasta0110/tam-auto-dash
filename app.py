@@ -22,7 +22,7 @@ order_df, delivery_df = load_data()
 
 # ana_df로 사용
 ana_df = delivery_df
-
+st.write(ana_df.columns)
 
 # 날짜 변수 생성
 yesterday = datetime.date.today() - datetime.timedelta(days=1)

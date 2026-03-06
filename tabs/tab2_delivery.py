@@ -9,6 +9,12 @@ def render_delivery(ana_df):
 
     st.title("🚛 배송사별 비교 및 추이")
 
+    # ✅ 컬럼 존재 여부 먼저 확인
+    if "연월_키" not in ana_df.columns or "배송사_정제" not in ana_df.columns:
+        st.error("데이터 전처리가 제대로 되지 않았습니다.")
+        st.write("현재 데이터 컬럼:", ana_df.columns)
+        return
+
     # --- 기존 TAB2 코드 그대로 시작 ---
     total_compare = ana_df.groupby(['연월_키', '배송사_정제']).size().reset_index(name='완료건수').rename(columns={'배송사_정제': '지역센터'})
     all_months = sorted(total_compare['연월_키'].unique())
@@ -38,7 +44,10 @@ def render_delivery(ana_df):
         view_months = all_months[start_i:end_i]
 
         with col_mid:
-            st.markdown(f"<h2 style='text-align: center; color: #0077b6;'>📅 {view_months[0]} ~ {view_months[-1]}</h2>", unsafe_allow_html=True)
+            st.markdown(
+                f"<h2 style='text-align: center; color: #0077b6;'>📅 {view_months[0]} ~ {view_months[-1]}</h2>",
+                unsafe_allow_html=True
+            )
 
         df_view = total_compare[total_compare['연월_키'].isin(view_months)].copy()
         monthly_totals = df_view.groupby('연월_키')['완료건수'].sum()
@@ -46,7 +55,6 @@ def render_delivery(ana_df):
         fig_bar = go.Figure()
 
         active_centers = [v for v in V_ORDER if v in df_view['지역센터'].unique()]
-
         colors = px.colors.qualitative.Pastel
 
         for i, center in enumerate(active_centers):
