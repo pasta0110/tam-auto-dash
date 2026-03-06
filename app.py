@@ -4,7 +4,7 @@ from data_loader import load_data
 
 from tabs.tab1_summary import render_tab1
 from tabs.tab2_delivery import render_delivery
-from tabs.tab3_prediction import render_tab3
+from tabs.tab3_prediction import render_prediction
 from tabs.tab4_validation import render_tab4
 from tabs.tab5_map import render_tab5
 
