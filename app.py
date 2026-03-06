@@ -742,5 +742,6 @@ with tab4:
             with mm2:
                 fig_master = px.line(df_master, x='영업일', y='평균정확도', markers=True, title="역대 영업일별 평균 정확도 추이")
                 fig_master.add_vline(x=m_golden['영업일'], line_dash="dash", line_color="green")
-                st.plotly_chart(fig_master, use_container_width=True)        else:
+                st.plotly_chart(fig_master, use_container_width=True)
+        else:
             st.warning("영업일 데이터를 계산할 수 없습니다.")
