@@ -208,7 +208,7 @@ def upload_to_github():
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
 
-        commit_msg = f"🚀 실시간 업데이트 ({now_str})"
+        commit_msg = f"📦 ERP 데이터 자동 업데이트 ({now_str})"
 
         subprocess.run(
             ["git", "commit", "-m", commit_msg],
