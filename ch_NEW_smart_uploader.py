@@ -1,11 +1,12 @@
 import os
 import subprocess
-import datetime
 import shutil
 import traceback
 import requests
 import pandas as pd
 from io import BytesIO
+import calendar
+from datetime import datetime
 
 
 # ==========================================
@@ -19,8 +20,21 @@ login_pw = "351037"
 
 session = requests.Session()
 
-today = datetime.date.today()
-yesterday = today - datetime.timedelta(days=1)
+today = datetime.today()
+start_date = "2025-02-01"
+
+# 당월 말일
+last_day = calendar.monthrange(today.year, today.month)[1]
+month_end = datetime(today.year, today.month, last_day)
+
+# +3개월
+future_month = today.month + 3
+future_year = today.year + (future_month - 1) // 12
+future_month = ((future_month - 1) % 12) + 1
+
+future_last_day = calendar.monthrange(future_year, future_month)[1]
+
+end_date = f"{future_year}-{future_month:02d}-{future_last_day}"
 
 # ==========================================
 # 2. ERP CSV 다운로드
@@ -48,15 +62,15 @@ def download_erp_csv():
 
         dl_url = "http://ene.kins.co.kr/excel/downloadExcel.do"
 
-        end_to = yesterday.strftime("%Y-%m-%d")
+
 
         # =========================
         # 출고 파라미터
         # =========================
 
         delivery_p = {
-            "delivery_dt_from": "2025-02-01",
-            "delivery_dt_to": end_to,
+            "delivery_dt_from": start_date,
+            "delivery_dt_to": end_date,
             "url": "/delivery/deliveryList.do",
             "id": "delivery_list",
             "rows": "5000",
@@ -72,8 +86,8 @@ def download_erp_csv():
         # =========================
 
         order_p = {
-            "order_date_from": yesterday.strftime("%Y-%m-01"),
-            "order_date_to": end_to,
+            "order_date_from": start_date,
+            "order_date_to": end_date,
             "url": "/order/orderList.do",
             "id": "order_list",
             "non_target": "0",
@@ -128,7 +142,7 @@ def download_erp_csv():
 
 def upload_to_github():
 
-    print(f"\n✨ [작업 시작] {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n✨ [작업 시작] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
 
@@ -192,7 +206,7 @@ def upload_to_github():
         # 커밋
         # ==========================
 
-        now_str = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
 
         commit_msg = f"🚀 실시간 업데이트 ({now_str})"
 
