@@ -5,6 +5,8 @@ import shutil
 import traceback
 import requests
 import pandas as pd
+from io import BytesIO
+
 
 # ==========================================
 # 1. 기본 설정
@@ -91,7 +93,7 @@ def download_erp_csv():
 
         resp = session.post(dl_url, data=delivery_p)
 
-        df = pd.read_html(resp.content, encoding="cp949")[0]
+        df = pd.read_excel(BytesIO(resp.content))
 
         delivery_path = os.path.join(git_repo_path, "delivery.csv")
 
