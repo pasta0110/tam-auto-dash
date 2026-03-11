@@ -15,8 +15,8 @@ from datetime import datetime
 
 git_repo_path = r"C:\Users\alcls\Documents\tam-auto-dash"
 
-login_id = "ene0002"
-login_pw = "351037"
+login_id = os.getenv("ERP_LOGIN_ID")
+login_pw = os.getenv("ERP_LOGIN_PW")
 
 session = requests.Session()
 
@@ -45,6 +45,11 @@ def download_erp_csv():
     print("\n🚀 ERP CSV 다운로드 시작...")
 
     try:
+
+        if not login_id or not login_pw:
+            raise RuntimeError(
+                "ERP 로그인 환경변수(ERP_LOGIN_ID, ERP_LOGIN_PW)가 설정되지 않았습니다."
+            )
 
         # 로그인
         login_data = {"login_id": login_id, "login_passwd": login_pw}
