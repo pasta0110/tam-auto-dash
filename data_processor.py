@@ -4,6 +4,94 @@
 import pandas as pd
 from utils.text_utils import clean_v, get_qty, get_main_cat, check_panel
 
+def _mode_or_first(series: pd.Series):
+    s = series.dropna().astype(str)
+    if s.empty:
+        return None
+    try:
+        return s.mode().iloc[0]
+    except Exception:
+        return s.iloc[0]
+
+
+def build_order_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    주문번호 단위 요약 테이블 (Order KPI용 베이스)
+    - 이벤트는 delivery_df(1:N)를 주문번호 단위로 집계합니다.
+    - 취소 정의: 배송상태 == '미설치'
+    - 우선순위 최종상태: 반품 > 교환 > AS > 취소 > 정상
+    """
+    if order_df is None or order_df.empty or "주문번호" not in order_df.columns:
+        return pd.DataFrame()
+
+    o = order_df.copy()
+    d = delivery_df.copy() if delivery_df is not None else pd.DataFrame()
+
+    if "매출처" in o.columns:
+        o = o[o["매출처"].astype(str).eq("청호나이스")].copy()
+    if "매출처" in d.columns:
+        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
+
+    base = (
+        o.groupby("주문번호", dropna=False)
+        .agg(
+            주문유형=("주문유형", _mode_or_first) if "주문유형" in o.columns else ("주문번호", "size"),
+            주문상태=("주문상태", _mode_or_first) if "주문상태" in o.columns else ("주문번호", "size"),
+            등록일=("등록일", "min") if "등록일" in o.columns else ("주문번호", "size"),
+            배송예정일=("배송예정일", "min") if "배송예정일" in o.columns else ("주문번호", "size"),
+            판매인=("판매인", _mode_or_first) if "판매인" in o.columns else ("주문번호", "size"),
+            판매지국=("판매지국", _mode_or_first) if "판매지국" in o.columns else ("주문번호", "size"),
+            수취인=("수취인", _mode_or_first) if "수취인" in o.columns else ("주문번호", "size"),
+        )
+        .reset_index()
+    )
+
+    if d.empty or "주문번호" not in d.columns:
+        for c in ["AS_이벤트수", "교환_이벤트수", "반품_이벤트수", "취소_이벤트수"]:
+            base[c] = 0
+    else:
+        ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
+        order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
+        ship_status = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
+
+        as_m = ship_type.eq("AS")
+        ex_m = ship_type.eq("교환")
+        ret_m = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
+        cancel_m = ship_status.eq("미설치")
+
+        ev = (
+            d.assign(_as=as_m.astype(int), _ex=ex_m.astype(int), _ret=ret_m.astype(int), _can=cancel_m.astype(int))
+            .groupby("주문번호", dropna=False)[["_as", "_ex", "_ret", "_can"]]
+            .sum()
+            .rename(columns={"_as": "AS_이벤트수", "_ex": "교환_이벤트수", "_ret": "반품_이벤트수", "_can": "취소_이벤트수"})
+            .reset_index()
+        )
+        base = base.merge(ev, on="주문번호", how="left").fillna(
+            {"AS_이벤트수": 0, "교환_이벤트수": 0, "반품_이벤트수": 0, "취소_이벤트수": 0}
+        )
+
+    for c in ["AS_이벤트수", "교환_이벤트수", "반품_이벤트수", "취소_이벤트수"]:
+        base[c] = base[c].astype(int)
+
+    base["AS발생"] = base["AS_이벤트수"] > 0
+    base["교환발생"] = base["교환_이벤트수"] > 0
+    base["반품발생"] = base["반품_이벤트수"] > 0
+    base["취소발생"] = base["취소_이벤트수"] > 0
+
+    def _final(row) -> str:
+        if row["반품발생"]:
+            return "반품"
+        if row["교환발생"]:
+            return "교환"
+        if row["AS발생"]:
+            return "AS"
+        if row["취소발생"]:
+            return "취소"
+        return "정상"
+
+    base["최종상태"] = base.apply(_final, axis=1)
+    return base
+
 def process_data(order_df, delivery_df):
     """
     로드된 데이터프레임을 전처리하여 분석용 데이터 생성

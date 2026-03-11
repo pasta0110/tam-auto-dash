@@ -39,14 +39,118 @@ def _month_key_from_date_col(df: pd.DataFrame, col: str) -> pd.Series:
     dt = _safe_to_datetime(df[col])
     return dt.dt.strftime("%Y-%m")
 
+
+def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    주문번호(주문 단위)로 월별(배송예정일 기준) 상태를 1건으로 요약합니다.
+    - Key: (연월_키, 주문번호) 1건
+    - 정의
+      - AS: 배송유형 == 'AS'
+      - 교환: 배송유형 == '교환'
+      - 반품: 배송유형 in ('반품','회수') or 주문유형 == '반품'
+      - 취소: 배송상태 == '미설치'
+      - 정상(상세): 주문유형=='정상' AND 주문상태!='주문취소' AND 배송유형=='정상' AND 배송상태!='미설치'
+    """
+    if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
+        return pd.DataFrame()
+
+    d = delivery_df.copy()
+    if "매출처" in d.columns:
+        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
+
+    if "배송예정일" not in d.columns:
+        return pd.DataFrame()
+
+    d_dt = _safe_to_datetime(d["배송예정일"])
+    d = d.assign(연월_키=_month_key(d_dt))
+    d = d[d["연월_키"].notna()].copy()
+    if d.empty:
+        return pd.DataFrame()
+
+    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
+    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
+    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
+    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
+
+    is_cancel = ship_stat.eq("미설치")
+    is_exchange = ship_type.eq("교환")
+    is_as = ship_type.eq("AS")
+    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
+    is_normal_strict = (
+        order_type.eq("정상")
+        & ~order_stat.eq("주문취소")
+        & ship_type.eq("정상")
+        & ~ship_stat.eq("미설치")
+    )
+
+    by_order_month = (
+        d.assign(
+            _cancel=is_cancel.astype(int),
+            _exchange=is_exchange.astype(int),
+            _as=is_as.astype(int),
+            _return=is_return.astype(int),
+            _normal=is_normal_strict.astype(int),
+        )
+        .groupby(["연월_키", "주문번호"], dropna=False)[["_cancel", "_exchange", "_as", "_return", "_normal"]]
+        .max()
+        .reset_index()
+        .rename(
+            columns={
+                "_cancel": "취소발생",
+                "_exchange": "교환발생",
+                "_as": "AS발생",
+                "_return": "반품발생",
+                "_normal": "정상(상세)",
+            }
+        )
+    )
+
+    def _final(row) -> str:
+        if int(row.get("반품발생", 0)) > 0:
+            return "반품"
+        if int(row.get("교환발생", 0)) > 0:
+            return "교환"
+        if int(row.get("AS발생", 0)) > 0:
+            return "AS"
+        if int(row.get("정상(상세)", 0)) > 0:
+            return "정상"
+        if int(row.get("취소발생", 0)) > 0:
+            return "취소"
+        return "정상"
+
+    by_order_month["최종상태"] = by_order_month.apply(_final, axis=1)
+
+    # 주문정보 매핑(있으면) - join key는 주문번호만 사용
+    o = order_df.copy() if order_df is not None else pd.DataFrame()
+    if not o.empty and "주문번호" in o.columns:
+        if "매출처" in o.columns:
+            o = o[o["매출처"].astype(str).eq("청호나이스")].copy()
+
+        cols = [c for c in ["주문번호", "판매인", "판매지국", "수취인", "상품코드", "상품명", "등록일"] if c in o.columns]
+        if cols:
+            agg = {}
+            for c in cols:
+                if c == "주문번호":
+                    continue
+                if c == "등록일":
+                    agg[c] = "min"
+                else:
+                    agg[c] = lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else ""
+            base = o[cols].dropna(subset=["주문번호"]).groupby("주문번호", dropna=False).agg(agg).reset_index()
+            by_order_month = by_order_month.merge(base, on="주문번호", how="left")
+
+    return by_order_month
+
+
 def _kpi_table(delivery_df: pd.DataFrame) -> pd.DataFrame:
     """
     - 날짜 기준: 배송예정일
+    - 집계 단위: 주문번호(주문 단위) 1건
     - AS: 배송유형='AS'
     - 교환: 배송유형='교환'
     - 반품: 배송유형 in ('반품','회수') 또는 주문유형='반품'
-    - 취소: 주문상태='주문취소'
-    - 정상: 아래 기준 충족
+    - 취소: 배송상태='미설치'
+    - 정상(상세): 아래 기준 충족
       1) 주문유형 : 정상
       2) 주문상태 : 주문취소 빼고 다
       3) 배송유형 : 정상
@@ -55,51 +159,25 @@ def _kpi_table(delivery_df: pd.DataFrame) -> pd.DataFrame:
     ✅ 전체는 아래 5개 버킷의 합으로 정의됩니다.
        전체 = 정상 + AS + 교환 + 반품 + 취소
     """
-    d = delivery_df.copy()
-    d_dt = _safe_to_datetime(d["배송예정일"]) if "배송예정일" in d.columns else pd.Series([], dtype="datetime64[ns]")
-    if not d_dt.notna().any():
+    # delivery -> (월, 주문번호) 1건 요약
+    om = _build_order_month_summary(pd.DataFrame(), delivery_df)
+    if om.empty:
         return pd.DataFrame()
-    d["연월_키"] = _month_key(d_dt)
 
-    # (선택) 매출처 필터가 있으면 청호나이스만
-    if "매출처" in d.columns:
-        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
+    # 정상은 '정상(상세)'가 True인 주문만 정상으로 인정하고,
+    # 최종상태가 '정상'이지만 상세 정상 조건이 불명확한 건은 미분류로 표기합니다.
+    bucket = pd.Series("미분류", index=om.index)
+    bucket[om["최종상태"].astype(str).eq("취소")] = "취소"
+    bucket[(bucket == "미분류") & om["최종상태"].astype(str).eq("반품")] = "반품"
+    bucket[(bucket == "미분류") & om["최종상태"].astype(str).eq("교환")] = "교환"
+    bucket[(bucket == "미분류") & om["최종상태"].astype(str).eq("AS")] = "AS"
+    bucket[(bucket == "미분류") & om["최종상태"].astype(str).eq("정상") & (om["정상(상세)"] > 0)] = "정상"
+    om["버킷"] = bucket
 
-    # 버킷 마스크
-    # 취소(주문취소) 정의: 배송상태 == '미설치'
-    cancel_m = d["배송상태"].astype(str).eq("미설치") if "배송상태" in d.columns else pd.Series(False, index=d.index)
-    exchange_m = d["배송유형"].astype(str).eq("교환") if "배송유형" in d.columns else pd.Series(False, index=d.index)
-    as_m = d["배송유형"].astype(str).eq("AS") if "배송유형" in d.columns else pd.Series(False, index=d.index)
-    return_m = pd.Series(False, index=d.index)
-    if "배송유형" in d.columns:
-        return_m |= d["배송유형"].astype(str).isin(["반품", "회수"])
-    if "주문유형" in d.columns:
-        return_m |= d["주문유형"].astype(str).eq("반품")
-
-    normal_m = pd.Series(True, index=d.index)
-    if "주문유형" in d.columns:
-        normal_m &= d["주문유형"].astype(str).eq("정상")
-    if "주문상태" in d.columns:
-        normal_m &= ~d["주문상태"].astype(str).eq("주문취소")
-    if "배송유형" in d.columns:
-        normal_m &= d["배송유형"].astype(str).eq("정상")
-    if "배송상태" in d.columns:
-        normal_m &= ~d["배송상태"].astype(str).eq("미설치")
-
-    # 서로 겹치지 않게 우선순위로 분류
-    bucket = pd.Series("미분류", index=d.index)
-    bucket[cancel_m] = "취소"
-    bucket[(bucket == "미분류") & exchange_m] = "교환"
-    bucket[(bucket == "미분류") & as_m] = "AS"
-    bucket[(bucket == "미분류") & return_m] = "반품"
-    bucket[(bucket == "미분류") & normal_m] = "정상"
-    d["버킷"] = bucket
-
-    # 월별 집계
-    months = sorted(set(d["연월_키"].dropna().unique()))
+    months = sorted(set(om["연월_키"].dropna().unique()))
     rows = []
     for m in months:
-        dm = d[d["연월_키"] == m]
+        dm = om[om["연월_키"] == m]
         ok_cnt = int((dm["버킷"] == "정상").sum())
         as_cnt = int((dm["버킷"] == "AS").sum())
         ex_cnt = int((dm["버킷"] == "교환").sum())
@@ -139,6 +217,17 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     st.subheader("📌 1.5 인사이트")
     # st.dataframe은 숫자/문자 컬럼별 기본 정렬이 강제되는 경우가 있어
     # 가운데 정렬 보장을 위해 이 탭은 st.table(Styler)로 렌더링합니다.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stDataFrame"] td div { text-align: center !important; }
+        [data-testid="stDataFrame"] th div { text-align: center !important; }
+        [data-testid="stTable"] td { text-align: center !important; }
+        [data-testid="stTable"] th { text-align: center !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if order_df is None or delivery_df is None:
         st.info("데이터가 없어 KPI를 표시할 수 없습니다.")
@@ -159,10 +248,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     # 선택 월 카드(표 위)
     row = kpi_df[kpi_df["월"] == sel_month].iloc[0].to_dict()
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("AS율(%)", f"{row['AS율']:.2f}", f"{row['AS']}건")
-    c2.metric("교환율(%)", f"{row['교환율']:.2f}", f"{row['교환']}건")
-    c3.metric("반품율(%)", f"{row['반품율']:.2f}", f"{row['반품']}건")
-    c4.metric("취소율(%)", f"{row['취소율']:.2f}", f"{row['취소']}건")
+    c1.metric("AS율(%)", f"{row['AS율']:.2f}", f"{row['AS']}건(주문)")
+    c2.metric("교환율(%)", f"{row['교환율']:.2f}", f"{row['교환']}건(주문)")
+    c3.metric("반품율(%)", f"{row['반품율']:.2f}", f"{row['반품']}건(주문)")
+    c4.metric("취소율(%)", f"{row['취소율']:.2f}", f"{row['취소']}건(주문)")
 
     st.subheader("월별 비정상 유형별 분석")
 
@@ -192,7 +281,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     if unclassified_total:
         st.warning(f"⚠️ 미분류 데이터가 {unclassified_total}건 있습니다. (전체 합계에는 포함되지 않음)")
 
-    st.caption("날짜는 배송예정일 기준으로 집계합니다. '전체'는 정상(주문유형=정상) 유형 전체, '정상'은 상세 기준을 충족한 건입니다.")
+    st.caption("날짜는 배송예정일 기준, 집계 단위는 '주문번호'입니다. '전체'는 5개 버킷(정상/AS/교환/반품/취소)의 합이며 '정상'은 상세 기준을 충족한 주문만 포함합니다.")
 
     # ==========================
     # 의사결정용 표시 (드릴다운)
@@ -225,25 +314,25 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
         if not required.issubset(set(o_m.columns).union(set(d_m.columns))):
             st.info("주문번호 컬럼이 없어 표시할 수 없습니다.")
         else:
-            # 분모(정상) 기준: 정상 주문에서 파생된 이슈를 주문번호 단위로 집계
-            d_as = d_m[d_m.get("주문유형", "").astype(str).eq("AS")].copy() if "주문유형" in d_m.columns else d_m.iloc[0:0]
-            d_exchange = (
-                d_as[d_as.get("배송유형", "").astype(str).eq("교환")].copy() if "배송유형" in d_as.columns else d_as.iloc[0:0]
-            )
-            d_as_only = d_as.drop(index=d_exchange.index, errors="ignore")
-            d_return = d_m[d_m.get("주문유형", "").astype(str).str.contains("반품", na=False)].copy() if "주문유형" in d_m.columns else d_m.iloc[0:0]
+            # 정의(요청 기준)
+            d_as = d_m[d_m.get("배송유형", "").astype(str).eq("AS")].copy() if "배송유형" in d_m.columns else d_m.iloc[0:0]
+            d_exchange = d_m[d_m.get("배송유형", "").astype(str).eq("교환")].copy() if "배송유형" in d_m.columns else d_m.iloc[0:0]
 
-            # 취소 정의(배송상태=미설치) 기반으로 주문번호 집계
-            d_cancel = (
-                d_m[d_m.get("배송상태", "").astype(str).eq("미설치")].copy() if "배송상태" in d_m.columns else d_m.iloc[0:0]
-            )
+            ret_mask = pd.Series(False, index=d_m.index)
+            if "배송유형" in d_m.columns:
+                ret_mask |= d_m["배송유형"].astype(str).isin(["반품", "회수"])
+            if "주문유형" in d_m.columns:
+                ret_mask |= d_m["주문유형"].astype(str).eq("반품")
+            d_return = d_m[ret_mask].copy()
+
+            d_cancel = d_m[d_m.get("배송상태", "").astype(str).eq("미설치")].copy() if "배송상태" in d_m.columns else d_m.iloc[0:0]
 
             def _counts(df: pd.DataFrame, label: str) -> pd.DataFrame:
                 if df is None or df.empty or "주문번호" not in df.columns:
                     return pd.DataFrame(columns=["주문번호", label])
                 return df.groupby("주문번호", dropna=False).size().reset_index(name=label)
 
-            c_as = _counts(d_as_only, "AS")
+            c_as = _counts(d_as, "AS")
             c_ex = _counts(d_exchange, "교환")
             c_ret = _counts(d_return, "반품")
             c_can = _counts(d_cancel, "취소")
@@ -294,8 +383,8 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
     # 2) AS/교환 급증 상품코드
     with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
-        if "상품코드" not in d.columns or "주문유형" not in d.columns:
-            st.info("상품코드/주문유형 컬럼이 없어 표시할 수 없습니다.")
+        if "상품코드" not in d.columns or "배송유형" not in d.columns:
+            st.info("상품코드/배송유형 컬럼이 없어 표시할 수 없습니다.")
         else:
             months_sorted = sorted(d["연월_키"].dropna().unique().tolist())
             prev_month = None
@@ -309,11 +398,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 d_prev = d[d["연월_키"] == prev_month].copy()
 
                 def _issue_counts(df: pd.DataFrame) -> pd.DataFrame:
-                    as_df = df[df["주문유형"].astype(str).eq("AS")].copy()
-                    ex_df = as_df[as_df.get("배송유형", "").astype(str).eq("교환")].copy() if "배송유형" in as_df.columns else as_df.iloc[0:0]
-                    as_only = as_df.drop(index=ex_df.index, errors="ignore")
+                    as_df = df[df["배송유형"].astype(str).eq("AS")].copy()
+                    ex_df = df[df["배송유형"].astype(str).eq("교환")].copy()
 
-                    as_c = as_only.groupby("상품코드").size().rename("AS").reset_index()
+                    as_c = as_df.groupby("상품코드").size().rename("AS").reset_index()
                     ex_c = ex_df.groupby("상품코드").size().rename("교환").reset_index()
                     out = as_c.merge(ex_c, on="상품코드", how="outer").fillna(0)
                     out["AS"] = out["AS"].astype(int)
@@ -328,8 +416,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     merged[c] = merged[c].astype(int)
                 merged["증가"] = merged["총이슈_이번달"] - merged["총이슈_전월"]
 
-                min_cur = st.number_input("이번달 최소 이슈건수", min_value=1, max_value=9999, value=3, step=1, key="min_cur_issues")
-                cand = merged[(merged["총이슈_이번달"] >= int(min_cur)) & (merged["증가"] > 0)].copy()
+                cand = merged[(merged["총이슈_이번달"] > 0) & (merged["증가"] > 0)].copy()
                 cand = cand.sort_values(["증가", "총이슈_이번달"], ascending=False)
 
                 if cand.empty:
@@ -390,164 +477,112 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         )
                     )
 
-    # 3) 취소율 높은 판매지국/판매인
-    with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
-        if o_m.empty or "주문유형" not in o_m.columns:
-            st.info("주문유형 컬럼이 없어 표시할 수 없습니다.")
+    # 공통: 주문번호(주문 단위) 월 요약
+    om_all = _build_order_month_summary(order_df, delivery_df)
+    om_m = om_all[om_all.get("연월_키", "") == sel_month].copy() if not om_all.empty else pd.DataFrame()
+
+    def _valid_bucket_df(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        out = df.copy()
+        out["버킷"] = out["최종상태"].astype(str)
+        out.loc[(out["버킷"] == "정상") & ~(out.get("정상(상세)", 0) > 0), "버킷"] = "미분류"
+        return out[out["버킷"].isin(["정상", "AS", "교환", "반품", "취소"])].copy()
+
+    # 3) 취소 TOP 판매지국/판매인
+    with st.expander("3) 취소 TOP 판매지국/판매인 (조회 월 기준)", expanded=True):
+        base = _valid_bucket_df(om_m)
+        if base.empty:
+            st.info("해당 월에 집계할 데이터가 없습니다.")
         else:
-            norm = o_m[o_m["주문유형"].astype(str).eq("정상")].copy()
-            if norm.empty:
-                st.info("해당 월에 정상 주문이 없습니다.")
-            else:
-                # 취소 정의(배송상태=미설치): delivery에서 주문번호를 뽑아 order에 매핑
-                if "주문번호" in norm.columns and "배송상태" in d_m.columns and "주문번호" in d_m.columns:
-                    cancel_orders = set(d_m.loc[d_m["배송상태"].astype(str).eq("미설치"), "주문번호"].dropna().astype(str).tolist())
-                    norm["is_cancel"] = norm["주문번호"].astype(str).isin(cancel_orders)
-                else:
-                    norm["is_cancel"] = False
-
-                def _rate_by(col: str) -> pd.DataFrame:
-                    if col not in norm.columns:
-                        return pd.DataFrame()
-                    g = norm.groupby(col, dropna=False).agg(정상=("is_cancel", "size"), 취소=("is_cancel", "sum")).reset_index()
-                    g["취소율(%)"] = (g["취소"] / g["정상"] * 100).round(2)
-                    return g.sort_values(["취소", "취소율(%)"], ascending=False)
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**판매지국 TOP**")
-                    g = _rate_by("판매지국")
-                    if g.empty:
-                        st.info("판매지국 컬럼이 없습니다.")
-                    else:
-                        st.table(_styled_table(g.head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
-                with c2:
-                    st.markdown("**판매인 TOP**")
-                    g = _rate_by("판매인")
-                    if g.empty:
-                        st.info("판매인 컬럼이 없습니다.")
-                    else:
-                        view = g.copy()
-                        if "판매지국" in norm.columns:
-                            seller_to_branch = (
-                                norm.dropna(subset=["판매인"])
-                                .groupby("판매인")["판매지국"]
-                                .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
-                                .to_dict()
-                            )
-                            view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
-                            view["판매인 (판매지국)"] = view.apply(
-                                lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
-                                axis=1,
-                            )
-                            view = view[["판매인 (판매지국)", "정상", "취소", "취소율(%)"]]
-                        else:
-                            view = view[["판매인", "정상", "취소", "취소율(%)"]]
-                        st.table(_styled_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
-
-    # 4) 반품율 높은 판매지국/판매인 (반품 수량 기준)
-    with st.expander("4) 반품율 높은 판매지국/판매인 (반품 수량 기준)", expanded=True):
-        if order_df is None or delivery_df is None:
-            st.info("데이터가 없어 표시할 수 없습니다.")
-        elif "주문유형" not in order_df.columns:
-            st.info("주문유형 컬럼이 없어 표시할 수 없습니다.")
-        else:
-            # Cohort 기준: 조회 월에 '판매된' 건(등록일 기준)만 실적으로 잡고,
-            # 그 주문에서 파생된 반품(기간 무관)을 연결해서 "비정상 판매"를 평가합니다.
-            o_all = order_df.copy()
-            if "매출처" in o_all.columns:
-                o_all = o_all[o_all["매출처"].astype(str).eq("청호나이스")].copy()
-
-            order_month = _month_key_from_date_col(o_all, "등록일")
-            cohort = o_all[(order_month == sel_month) & (o_all["주문유형"].astype(str).eq("정상"))].copy()
-
-            # 분모는 정상 판매 실적(취소 제외)
-            if "주문상태" in cohort.columns:
-                cohort = cohort[~cohort["주문상태"].astype(str).eq("주문취소")].copy()
-
-            if cohort.empty:
-                st.info("해당 월(등록일 기준)에 정상 주문 실적이 없습니다.")
-                # expander 내에서만 종료
-                cohort = cohort.iloc[0:0].copy()
-
-            # 정상 수량(분모): order_df의 '수량' (없으면 1로 간주)
-            if "수량" not in cohort.columns:
-                cohort["수량"] = 1
-            cohort["수량"] = pd.to_numeric(cohort["수량"], errors="coerce").fillna(1).astype(int)
-
-            # 반품 라인(기간 무관): delivery 전체에서 반품/회수 또는 주문유형 반품
-            d_all = delivery_df.copy()
-            if "매출처" in d_all.columns:
-                d_all = d_all[d_all["매출처"].astype(str).eq("청호나이스")].copy()
-
-            ret_mask = pd.Series(False, index=d_all.index)
-            if "배송유형" in d_all.columns:
-                ret_mask |= d_all["배송유형"].astype(str).isin(["반품", "회수"])
-            if "주문유형" in d_all.columns:
-                ret_mask |= d_all["주문유형"].astype(str).eq("반품")
-
-            ret_lines = d_all[ret_mask].copy()
-            if not ret_lines.empty:
-                if "수량" in ret_lines.columns:
-                    ret_lines["수량"] = pd.to_numeric(ret_lines["수량"], errors="coerce").fillna(1)
-                else:
-                    ret_lines["수량"] = 1
-
-                # 주문 단위로 보는게 목적이므로 주문번호 기준 연결을 우선합니다.
-                join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in cohort.columns]
-
-                if join_keys:
-                    ret_sum = ret_lines.groupby(join_keys, dropna=False)["수량"].sum().reset_index(name="반품수량")
-                    merged = cohort.merge(ret_sum, on=join_keys, how="left")
-                    merged["반품수량"] = merged["반품수량"].fillna(0)
-                else:
-                    merged = cohort.copy()
-                    merged["반품수량"] = 0
-            else:
-                merged = cohort.copy()
-                merged["반품수량"] = 0
-
-            def _rate_by(col: str) -> pd.DataFrame:
-                if col not in merged.columns:
+            def _cancel_rank(col: str) -> pd.DataFrame:
+                if col not in base.columns:
                     return pd.DataFrame()
-                g = merged.groupby(col, dropna=False).agg(정상수량=("수량", "sum"), 반품수량=("반품수량", "sum")).reset_index()
-                g["반품율(%)"] = (g["반품수량"] / g["정상수량"] * 100).round(2)
-                return g.sort_values(["반품수량", "반품율(%)"], ascending=False)
+                g = (
+                    base.groupby(col, dropna=False)
+                    .agg(전체=("주문번호", "size"), 정상=("버킷", lambda x: int((x == "정상").sum())), 취소=("버킷", lambda x: int((x == "취소").sum())))
+                    .reset_index()
+                )
+                g["취소율(%)"] = (g["취소"] / g["전체"] * 100).round(2)
+                return g.sort_values(["취소", "취소율(%)"], ascending=False)
 
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**판매지국 TOP**")
-                g = _rate_by("판매지국")
+                g = _cancel_rank("판매지국")
                 if g.empty:
                     st.info("판매지국 컬럼이 없습니다.")
                 else:
-                    st.table(
-                        _styled_table(
-                            g.head(20),
-                            percent_cols=["반품율(%)"],
-                            int_cols=["정상수량", "반품수량"],
-                        )
-                    )
+                    st.table(_styled_table(g.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"]))
             with c2:
                 st.markdown("**판매인 TOP**")
-                g = _rate_by("판매인")
+                g = _cancel_rank("판매인")
                 if g.empty:
                     st.info("판매인 컬럼이 없습니다.")
                 else:
                     view = g.copy()
-                    if "판매지국" in merged.columns:
+                    if "판매지국" in base.columns:
                         seller_to_branch = (
-                            merged.dropna(subset=["판매인"])
+                            base.dropna(subset=["판매인"])
                             .groupby("판매인")["판매지국"]
                             .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
                             .to_dict()
                         )
                         view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
                         view["판매인 (판매지국)"] = view.apply(
-                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
+                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
                             axis=1,
                         )
-                        view = view[["판매인 (판매지국)", "정상수량", "반품수량", "반품율(%)"]]
+                        view = view[["판매인 (판매지국)", "전체", "정상", "취소", "취소율(%)"]]
                     else:
-                        view = view[["판매인", "정상수량", "반품수량", "반품율(%)"]]
-                    st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["정상수량", "반품수량"]))
+                        view = view[["판매인", "전체", "정상", "취소", "취소율(%)"]]
+                    st.table(_styled_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"]))
+
+    # 4) 반품 TOP 판매지국/판매인
+    with st.expander("4) 반품 TOP 판매지국/판매인 (조회 월 기준)", expanded=True):
+        base = _valid_bucket_df(om_m)
+        if base.empty:
+            st.info("해당 월에 집계할 데이터가 없습니다.")
+        else:
+            def _return_rank(col: str) -> pd.DataFrame:
+                if col not in base.columns:
+                    return pd.DataFrame()
+                g = (
+                    base.groupby(col, dropna=False)
+                    .agg(전체=("주문번호", "size"), 정상=("버킷", lambda x: int((x == "정상").sum())), 반품=("버킷", lambda x: int((x == "반품").sum())))
+                    .reset_index()
+                )
+                g["반품율(%)"] = (g["반품"] / g["전체"] * 100).round(2)
+                return g.sort_values(["반품", "반품율(%)"], ascending=False)
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**판매지국 TOP**")
+                g = _return_rank("판매지국")
+                if g.empty:
+                    st.info("판매지국 컬럼이 없습니다.")
+                else:
+                    st.table(_styled_table(g.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
+            with c2:
+                st.markdown("**판매인 TOP**")
+                g = _return_rank("판매인")
+                if g.empty:
+                    st.info("판매인 컬럼이 없습니다.")
+                else:
+                    view = g.copy()
+                    if "판매지국" in base.columns:
+                        seller_to_branch = (
+                            base.dropna(subset=["판매인"])
+                            .groupby("판매인")["판매지국"]
+                            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                            .to_dict()
+                        )
+                        view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
+                        view["판매인 (판매지국)"] = view.apply(
+                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
+                            axis=1,
+                        )
+                        view = view[["판매인 (판매지국)", "전체", "정상", "반품", "반품율(%)"]]
+                    else:
+                        view = view[["판매인", "전체", "정상", "반품", "반품율(%)"]]
+                    st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
