@@ -5,6 +5,12 @@ import streamlit as st
 import pandas as pd
 from utils.date_utils import get_w_days
 
+def _safe_to_datetime(s: pd.Series) -> pd.Series:
+    try:
+        return pd.to_datetime(s, errors="coerce")
+    except Exception:
+        return pd.to_datetime(pd.Series([None] * len(s)), errors="coerce")
+
 def _filter_order_for_tab1(order_df: pd.DataFrame) -> pd.DataFrame:
     if order_df is None or order_df.empty:
         return order_df
@@ -90,8 +96,17 @@ def render(order_df, delivery_df, ana_df, ctx):
         order_date_col = '등록일' if '등록일' in order_df.columns else order_df.columns[0]
         
         # 날짜 필터링
-        curr_order = order_df[order_df[order_date_col].astype(str).str.contains(m_key, na=False)]
-        day_order = curr_order[curr_order[order_date_col].astype(str).str.contains(yesterday_str, na=False)]
+        # 엑셀 보고서 기준: 당월 1일 ~ 기준일(=어제)까지
+        order_dt = _safe_to_datetime(order_df[order_date_col]) if order_date_col in order_df.columns else pd.Series([], dtype="datetime64[ns]")
+        if order_dt.notna().any():
+            month_start = pd.Timestamp(year=yesterday.year, month=yesterday.month, day=1)
+            y_date = yesterday.date()
+            curr_order = order_df[(order_dt >= month_start) & (order_dt.dt.date <= y_date)].copy()
+            day_order = order_df[order_dt.dt.date == y_date].copy()
+        else:
+            # fallback (파싱 실패 시)
+            curr_order = order_df[order_df[order_date_col].astype(str).str.contains(m_key, na=False)]
+            day_order = curr_order[curr_order[order_date_col].astype(str).str.contains(yesterday_str, na=False)]
         
         rows = []
         for cat in ['매트리스', '파운데이션', '프레임']:
@@ -131,8 +146,20 @@ def render(order_df, delivery_df, ana_df, ctx):
     # --- 2. 출고 현황 ---
     with col2:
         st.subheader("🚚 2. 출고 현황")
-        monthly_delivery = ana_df[ana_df['연월_키'] == m_key]
-        day_delivery = monthly_delivery[monthly_delivery['배송예정일'].astype(str).str.contains(yesterday_str, na=False)]
+        # 엑셀 보고서 기준: 당월 1일 ~ 기준일(=어제)까지
+        if '배송예정일_DT' in ana_df.columns:
+            deli_dt = ana_df['배송예정일_DT']
+        else:
+            deli_dt = _safe_to_datetime(ana_df['배송예정일']) if '배송예정일' in ana_df.columns else pd.Series([], dtype="datetime64[ns]")
+
+        if deli_dt.notna().any():
+            month_start = pd.Timestamp(year=yesterday.year, month=yesterday.month, day=1)
+            y_date = yesterday.date()
+            monthly_delivery = ana_df[(deli_dt >= month_start) & (deli_dt.dt.date <= y_date)].copy()
+            day_delivery = ana_df[deli_dt.dt.date == y_date].copy()
+        else:
+            monthly_delivery = ana_df[ana_df['연월_키'] == m_key]
+            day_delivery = monthly_delivery[monthly_delivery['배송예정일'].astype(str).str.contains(yesterday_str, na=False)]
         
         rows = []
         for cat in ['매트리스', '파운데이션', '프레임']:
