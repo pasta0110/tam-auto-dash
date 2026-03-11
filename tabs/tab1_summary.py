@@ -4,12 +4,19 @@
 import streamlit as st
 import pandas as pd
 from utils.date_utils import get_w_days
+from datetime import date as _date
 
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
     try:
         return pd.to_datetime(s, errors="coerce")
     except Exception:
         return pd.to_datetime(pd.Series([None] * len(s)), errors="coerce")
+
+
+def _to_date(d):
+    if isinstance(d, _date) and not hasattr(d, "date"):
+        return d
+    return d.date()
 
 def _filter_order_for_tab1(order_df: pd.DataFrame) -> pd.DataFrame:
     if order_df is None or order_df.empty:
@@ -85,7 +92,8 @@ def render(order_df, delivery_df, ana_df, ctx):
     yesterday = ctx["yesterday"]
     yesterday_str = ctx["yesterday_str"]
     m_key = ctx["m_key"]
-    date_header = f"기준일({yesterday.strftime('%m/%d')})"
+    y_date = _to_date(yesterday)
+    date_header = f"기준일({y_date.strftime('%m/%d')})"
     
     col1, col2 = st.columns(2)
     col3, col4 = st.columns(2)
@@ -99,8 +107,7 @@ def render(order_df, delivery_df, ana_df, ctx):
         # 엑셀 보고서 기준: 당월 1일 ~ 기준일(=어제)까지
         order_dt = _safe_to_datetime(order_df[order_date_col]) if order_date_col in order_df.columns else pd.Series([], dtype="datetime64[ns]")
         if order_dt.notna().any():
-            month_start = pd.Timestamp(year=yesterday.year, month=yesterday.month, day=1)
-            y_date = yesterday.date()
+            month_start = pd.Timestamp(year=y_date.year, month=y_date.month, day=1)
             curr_order = order_df[(order_dt >= month_start) & (order_dt.dt.date <= y_date)].copy()
             day_order = order_df[order_dt.dt.date == y_date].copy()
         else:
@@ -153,8 +160,7 @@ def render(order_df, delivery_df, ana_df, ctx):
             deli_dt = _safe_to_datetime(ana_df['배송예정일']) if '배송예정일' in ana_df.columns else pd.Series([], dtype="datetime64[ns]")
 
         if deli_dt.notna().any():
-            month_start = pd.Timestamp(year=yesterday.year, month=yesterday.month, day=1)
-            y_date = yesterday.date()
+            month_start = pd.Timestamp(year=y_date.year, month=y_date.month, day=1)
             monthly_delivery = ana_df[(deli_dt >= month_start) & (deli_dt.dt.date <= y_date)].copy()
             day_delivery = ana_df[deli_dt.dt.date == y_date].copy()
         else:
