@@ -605,3 +605,13 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             else:
                 view = dbg[cols].copy()
                 st.table(_styled_table(view, int_cols=["정상(상세)", "취소발생", "AS발생", "교환발생", "반품발생"]))
+
+            # 주문 데이터 범위 안내 (판매인/지국이 NaN인 이유 확인용)
+            if order_df is not None and not order_df.empty:
+                date_col = "등록일" if "등록일" in order_df.columns else ("배송예정일" if "배송예정일" in order_df.columns else None)
+                if date_col:
+                    dt = _safe_to_datetime(order_df[date_col])
+                    if dt.notna().any():
+                        st.caption(
+                            f"주문 데이터 범위({date_col}): {dt.min().date()} ~ {dt.max().date()} / 이 범위 밖 주문번호는 판매인·판매지국이 비어 보일 수 있음"
+                        )
