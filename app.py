@@ -4,7 +4,7 @@
 import streamlit as st
 import config
 from utils.date_utils import get_current_context
-from data_loader import load_raw_data, get_data_snapshot_info, get_erp_run_meta
+from data_loader import load_raw_data, get_data_snapshot_info, get_erp_run_meta, get_github_last_commit_time
 from data_processor import process_data
 
 # 탭 모듈 임포트 (각 기능을 담당)
@@ -40,19 +40,19 @@ if run_meta:
     if run_meta.get("order_rows") is not None and run_meta.get("delivery_rows") is not None:
         parts.append(f"rows: order={run_meta.get('order_rows')}, delivery={run_meta.get('delivery_rows')}")
 
-# fallback: 헤더 Last-Modified
-if not parts and snapshot:
-    if snapshot.get("order_source") == "local":
-        parts.append(f"order.csv=local ({snapshot.get('order_mtime_kst')})")
-    else:
-        lm = snapshot.get("order_last_modified")
-        parts.append(f"order.csv=github (Last-Modified: {lm})")
+# fallback 1: GitHub 마지막 커밋 시각 (Streamlit Cloud에서 'local mtime'은 배포 시각이라 의미 없음)
+if not parts:
+    order_commit = get_github_last_commit_time("order.csv")
+    delivery_commit = get_github_last_commit_time("delivery.csv")
+    if order_commit or delivery_commit:
+        parts.append(f"GitHub 커밋: order.csv={order_commit or 'unknown'} | delivery.csv={delivery_commit or 'unknown'}")
 
-    if snapshot.get("delivery_source") == "local":
-        parts.append(f"delivery.csv=local ({snapshot.get('delivery_mtime_kst')})")
-    else:
-        lm = snapshot.get("delivery_last_modified")
-        parts.append(f"delivery.csv=github (Last-Modified: {lm})")
+# fallback 2: 헤더 Last-Modified
+if not parts and snapshot:
+    lm_o = snapshot.get("order_last_modified") or snapshot.get("order_mtime_kst")
+    lm_d = snapshot.get("delivery_last_modified") or snapshot.get("delivery_mtime_kst")
+    if lm_o or lm_d:
+        parts.append(f"Last-Modified: order.csv={lm_o or 'unknown'} | delivery.csv={lm_d or 'unknown'}")
 
 if parts:
     st.caption("데이터 기준: " + " | ".join(parts))

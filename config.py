@@ -15,6 +15,10 @@ ORDER_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/
 DELIVERY_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/delivery.csv"
 ERP_RUN_META_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/erp_run_meta.json"
 
+# GitHub repo info (commit time lookup fallback)
+GITHUB_OWNER = "pasta0110"
+GITHUB_REPO = "tam-auto-dash"
+
 # (레거시) 원격 엑셀
 DATA_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/data.xlsx"
 

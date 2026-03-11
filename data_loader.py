@@ -15,6 +15,8 @@ from config import (
     DELIVERY_CSV_URL,
     ERP_RUN_META_PATH,
     ERP_RUN_META_URL,
+    GITHUB_OWNER,
+    GITHUB_REPO,
 )
 
 def _format_dt_kst(dt):
@@ -37,6 +39,37 @@ def _http_last_modified(url: str):
         return {"last_modified": lm, "etag": etag}
     except Exception:
         return {"last_modified": None, "etag": None}
+
+
+def _parse_github_iso_to_kst(iso: str):
+    try:
+        import datetime
+        from zoneinfo import ZoneInfo
+
+        # e.g. 2026-03-11T03:42:33Z
+        dt = datetime.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
+    except Exception:
+        return iso
+
+
+@st.cache_data(ttl=300)
+def get_github_last_commit_time(path: str):
+    """
+    Public GitHub API 기반: 특정 파일의 마지막 커밋 시각(KST) 반환.
+    ERP 메타 파일이 없을 때(업로더 미실행) 최소한 'GitHub에 언제 올라갔는지'는 확인 가능.
+    """
+    try:
+        api = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits"
+        r = requests.get(api, params={"path": path, "per_page": 1}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        if not data:
+            return None
+        iso = data[0]["commit"]["committer"]["date"]
+        return _parse_github_iso_to_kst(iso)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=60)
