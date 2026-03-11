@@ -15,6 +15,20 @@ def _center_style(df: pd.DataFrame):
     )
 
 
+def _styled_table(df: pd.DataFrame, percent_cols=(), int_cols=()):
+    sty = _center_style(df)
+    fmt = {}
+    for c in percent_cols:
+        if c in df.columns:
+            fmt[c] = "{:.2f}"
+    for c in int_cols:
+        if c in df.columns:
+            fmt[c] = "{:,.0f}"
+    if fmt:
+        sty = sty.format(fmt)
+    return sty
+
+
 def _month_key(d: pd.Series) -> pd.Series:
     return d.dt.strftime("%Y-%m")
 
@@ -162,8 +176,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
         }
     )
     st.table(
-        _center_style(show).format(
-            {c: "{:.2f}" for c in ["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"] if c in show.columns}
+        _styled_table(
+            show,
+            percent_cols=["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"],
+            int_cols=["전체", "정상", "AS", "교환", "반품", "취소"],
         )
     )
 
@@ -268,7 +284,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 st.info("해당 월에 리스크 이벤트가 없습니다.")
             else:
                 view = out[["주문번호 (고객명)", "리스크점수", "AS", "교환", "반품", "취소"]].copy()
-                st.table(_center_style(view))
+                st.table(_styled_table(view, int_cols=["리스크점수", "AS", "교환", "반품", "취소"]))
 
     # 2) AS/교환 급증 상품코드
     with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
@@ -353,7 +369,20 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                             "교환_전월": "교환(전월)",
                         }
                     )
-                    st.table(_center_style(view))
+                    st.table(
+                        _styled_table(
+                            view,
+                            int_cols=[
+                                "증가",
+                                "총이슈(이번달)",
+                                "총이슈(전월)",
+                                "AS(이번달)",
+                                "교환(이번달)",
+                                "AS(전월)",
+                                "교환(전월)",
+                            ],
+                        )
+                    )
 
     # 3) 취소율 높은 판매지국/판매인
     with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
@@ -387,7 +416,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     if g.empty:
                         st.info("판매지국 컬럼이 없습니다.")
                     else:
-                        st.table(_center_style(g[g["정상"] >= int(min_denom)].head(20)))
+                        st.table(_styled_table(g[g["정상"] >= int(min_denom)].head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
                 with c2:
                     st.markdown("**판매인 TOP**")
                     g = _rate_by("판매인")
@@ -410,7 +439,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                             view = view[["판매인 (판매지국)", "정상", "취소", "취소율(%)"]]
                         else:
                             view = view[["판매인", "정상", "취소", "취소율(%)"]]
-                        st.table(_center_style(view.head(20)))
+                        st.table(_styled_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
 
     # 4) 반품율 높은 판매지국/판매인 (반품 수량 기준)
     with st.expander("4) 반품율 높은 판매지국/판매인 (반품 수량 기준)", expanded=True):
@@ -472,7 +501,13 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     if g.empty:
                         st.info("판매지국 컬럼이 없습니다.")
                     else:
-                        st.table(_center_style(g[g["정상수량"] >= int(min_qty)].head(20)))
+                        st.table(
+                            _styled_table(
+                                g[g["정상수량"] >= int(min_qty)].head(20),
+                                percent_cols=["반품율(%)"],
+                                int_cols=["정상수량", "반품수량"],
+                            )
+                        )
                 with c2:
                     st.markdown("**판매인 TOP**")
                     g = _rate_by("판매인")
@@ -495,4 +530,4 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                             view = view[["판매인 (판매지국)", "정상수량", "반품수량", "반품율(%)"]]
                         else:
                             view = view[["판매인", "정상수량", "반품수량", "반품율(%)"]]
-                        st.table(_center_style(view.head(20)))
+                        st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["정상수량", "반품수량"]))
