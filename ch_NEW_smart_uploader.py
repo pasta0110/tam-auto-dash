@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import subprocess
 import shutil
 import traceback
@@ -21,11 +22,28 @@ def _configure_utf8_stdio():
 
 _configure_utf8_stdio()
 
+def _now_kst():
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("Asia/Seoul"))
+    except Exception:
+        return datetime.now()
+
+
+def _write_run_meta(path: str, meta: dict):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
 # ==========================================
 # 1. 기본 설정
 # ==========================================
 
 git_repo_path = r"C:\Users\alcls\Documents\tam-auto-dash"
+run_meta_path = os.path.join(git_repo_path, "erp_run_meta.json")
 
 session = requests.Session()
 
@@ -261,9 +279,9 @@ def download_erp_csv():
 
     resp = session.post(dl_url, data=delivery_p)
     resp.raise_for_status()
-    df = pd.read_excel(BytesIO(resp.content))
+    delivery_df = pd.read_excel(BytesIO(resp.content))
     delivery_path = os.path.join(git_repo_path, "delivery.csv")
-    df.to_csv(delivery_path, index=False, encoding="utf-8-sig")
+    delivery_df.to_csv(delivery_path, index=False, encoding="utf-8-sig")
     print("✅ delivery.csv 생성 완료")
 
     # =========================
@@ -274,10 +292,12 @@ def download_erp_csv():
 
     resp = session.post(dl_url, data=order_p)
     resp.raise_for_status()
-    df = pd.read_excel(BytesIO(resp.content))
+    order_df = pd.read_excel(BytesIO(resp.content))
     order_path = os.path.join(git_repo_path, "order.csv")
-    df.to_csv(order_path, index=False, encoding="utf-8-sig")
+    order_df.to_csv(order_path, index=False, encoding="utf-8-sig")
     print("✅ order.csv 생성 완료")
+
+    return {"order_rows": int(order_df.shape[0]), "delivery_rows": int(delivery_df.shape[0])}
 
 
 # ==========================================
@@ -291,7 +311,9 @@ def upload_to_github():
     try:
 
         # ERP 데이터 먼저 다운로드
-        download_erp_csv()
+        extracted_at = _now_kst()
+        meta = {"extracted_at_kst": extracted_at.strftime("%Y-%m-%d %H:%M:%S KST")}
+        meta.update(download_erp_csv() or {})
 
         # 작업 디렉토리 이동
         if not os.path.exists(git_repo_path):
@@ -353,6 +375,11 @@ def upload_to_github():
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
 
         commit_msg = f"📦 ERP 데이터 자동 업데이트 ({now_str})"
+
+        # 메타 파일 기록(커밋에 포함되게 커밋 직전에 저장)
+        commit_at = _now_kst()
+        meta["commit_at_kst"] = commit_at.strftime("%Y-%m-%d %H:%M:%S KST")
+        _write_run_meta(run_meta_path, meta)
 
         subprocess.run(
             ["git", "commit", "-m", commit_msg],

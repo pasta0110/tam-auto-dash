@@ -5,6 +5,7 @@ import os
 import streamlit as st
 import pandas as pd
 import requests
+import json
 from io import BytesIO
 from config import (
     DATA_URL,
@@ -12,6 +13,8 @@ from config import (
     DELIVERY_CSV_PATH,
     ORDER_CSV_URL,
     DELIVERY_CSV_URL,
+    ERP_RUN_META_PATH,
+    ERP_RUN_META_URL,
 )
 
 def _format_dt_kst(dt):
@@ -34,6 +37,24 @@ def _http_last_modified(url: str):
         return {"last_modified": lm, "etag": etag}
     except Exception:
         return {"last_modified": None, "etag": None}
+
+
+@st.cache_data(ttl=60)
+def get_erp_run_meta():
+    """
+    UI용: ERP 데이터 추출/업로드 시점을 표시하기 위한 메타 정보
+    - 로컬 파일이 있으면 로컬 JSON
+    - 아니면 GitHub raw JSON
+    """
+    try:
+        if os.path.exists(ERP_RUN_META_PATH):
+            with open(ERP_RUN_META_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        resp = requests.get(ERP_RUN_META_URL, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=60)
