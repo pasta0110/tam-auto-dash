@@ -405,7 +405,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         return pd.DataFrame()
                     g = norm.groupby(col, dropna=False).agg(정상=("is_cancel", "size"), 취소=("is_cancel", "sum")).reset_index()
                     g["취소율(%)"] = (g["취소"] / g["정상"] * 100).round(2)
-                    return g.sort_values(["취소율(%)", "취소"], ascending=False)
+                    return g.sort_values(["취소", "취소율(%)"], ascending=False)
 
                 min_denom = st.number_input("최소 정상건수(필터)", min_value=1, max_value=99999, value=30, step=1, key="min_cancel_denom")
 
@@ -490,7 +490,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         return pd.DataFrame()
                     g = merged.groupby(col, dropna=False).agg(정상수량=("수량", "sum"), 반품수량=("반품수량", "sum")).reset_index()
                     g["반품율(%)"] = (g["반품수량"] / g["정상수량"] * 100).round(2)
-                    return g.sort_values(["반품율(%)", "반품수량"], ascending=False)
+                    return g.sort_values(["반품수량", "반품율(%)"], ascending=False)
 
                 min_qty = st.number_input("최소 정상수량(필터)", min_value=1, max_value=999999, value=50, step=1, key="min_return_qty")
 
