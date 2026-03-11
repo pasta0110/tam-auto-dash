@@ -110,6 +110,18 @@ def _kpi_table(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFram
 def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     st.subheader("📌 1.5 인사이트")
 
+    # Streamlit의 st.dataframe은 Styler의 정렬이 환경/버전별로 무시될 수 있어 CSS로 강제 중앙정렬합니다.
+    st.markdown(
+        """
+<style>
+div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
+  text-align: center !important;
+}
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+
     if order_df is None or delivery_df is None:
         st.info("데이터가 없어 KPI를 표시할 수 없습니다.")
         return
