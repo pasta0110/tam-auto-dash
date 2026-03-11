@@ -109,18 +109,8 @@ def _kpi_table(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFram
 
 def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     st.subheader("📌 1.5 인사이트")
-
-    # Streamlit의 st.dataframe은 Styler의 정렬이 환경/버전별로 무시될 수 있어 CSS로 강제 중앙정렬합니다.
-    st.markdown(
-        """
-<style>
-div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
-  text-align: center !important;
-}
-</style>
-""",
-        unsafe_allow_html=True,
-    )
+    # st.dataframe은 숫자/문자 컬럼별 기본 정렬이 강제되는 경우가 있어
+    # 가운데 정렬 보장을 위해 이 탭은 st.table(Styler)로 렌더링합니다.
 
     if order_df is None or delivery_df is None:
         st.info("데이터가 없어 KPI를 표시할 수 없습니다.")
@@ -159,10 +149,10 @@ div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
             "취소율": "취소율(%)",
         }
     )
-    st.dataframe(
-        _center_style(show).format({c: "{:.2f}" for c in ["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"] if c in show.columns}),
-        width="stretch",
-        hide_index=False,
+    st.table(
+        _center_style(show).format(
+            {c: "{:.2f}" for c in ["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"] if c in show.columns}
+        )
     )
 
     st.caption("날짜는 배송예정일 기준으로 집계합니다. '전체'는 정상(주문유형=정상) 유형 전체, '정상'은 상세 기준을 충족한 건입니다.")
@@ -263,7 +253,7 @@ div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
                 st.info("해당 월에 리스크 이벤트가 없습니다.")
             else:
                 view = out[["주문번호 (고객명)", "리스크점수", "AS", "교환", "반품", "취소"]].copy()
-                st.dataframe(_center_style(view), width="stretch", hide_index=True)
+                st.table(_center_style(view))
 
     # 2) AS/교환 급증 상품코드
     with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
@@ -348,7 +338,7 @@ div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
                             "교환_전월": "교환(전월)",
                         }
                     )
-                    st.dataframe(_center_style(view), width="stretch", hide_index=True)
+                    st.table(_center_style(view))
 
     # 3) 취소율 높은 판매지국/판매인
     with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
@@ -377,7 +367,7 @@ div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
                     if g.empty:
                         st.info("판매지국 컬럼이 없습니다.")
                     else:
-                        st.dataframe(g[g["정상"] >= int(min_denom)].head(20), width="stretch", hide_index=True)
+                        st.table(_center_style(g[g["정상"] >= int(min_denom)].head(20)))
                 with c2:
                     st.markdown("**판매인 TOP**")
                     g = _rate_by("판매인")
@@ -400,4 +390,4 @@ div[data-testid="stDataFrame"] th, div[data-testid="stDataFrame"] td {
                             view = view[["판매인 (판매지국)", "정상", "취소", "취소율(%)"]]
                         else:
                             view = view[["판매인", "정상", "취소", "취소율(%)"]]
-                        st.dataframe(_center_style(view.head(20)), width="stretch", hide_index=True)
+                        st.table(_center_style(view.head(20)))
