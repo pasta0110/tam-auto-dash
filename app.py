@@ -4,7 +4,7 @@
 import streamlit as st
 import config
 from utils.date_utils import get_current_context
-from data_loader import load_raw_data, get_data_snapshot_info, get_erp_run_meta, get_github_last_commit_time
+import data_loader
 from data_processor import process_data
 
 # 탭 모듈 임포트 (각 기능을 담당)
@@ -22,9 +22,10 @@ st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
-raw_order_df, raw_delivery_df = load_raw_data()
-snapshot = get_data_snapshot_info()
-run_meta = get_erp_run_meta()
+raw_order_df, raw_delivery_df = data_loader.load_raw_data()
+snapshot = getattr(data_loader, "get_data_snapshot_info", lambda: {})()
+run_meta = getattr(data_loader, "get_erp_run_meta", lambda: {})()
+get_commit_time = getattr(data_loader, "get_github_last_commit_time", lambda _path: None)
 
 # 4. 날짜 컨텍스트 확보 (오늘, 어제, 이번 달 등)
 ctx = get_current_context()
@@ -42,8 +43,8 @@ if run_meta:
 
 # fallback 1: GitHub 마지막 커밋 시각 (Streamlit Cloud에서 'local mtime'은 배포 시각이라 의미 없음)
 if not parts:
-    order_commit = get_github_last_commit_time("order.csv")
-    delivery_commit = get_github_last_commit_time("delivery.csv")
+    order_commit = get_commit_time("order.csv")
+    delivery_commit = get_commit_time("delivery.csv")
     if order_commit or delivery_commit:
         parts.append(f"GitHub 커밋: order.csv={order_commit or 'unknown'} | delivery.csv={delivery_commit or 'unknown'}")
 

@@ -15,9 +15,13 @@ from config import (
     DELIVERY_CSV_URL,
     ERP_RUN_META_PATH,
     ERP_RUN_META_URL,
-    GITHUB_OWNER,
-    GITHUB_REPO,
 )
+
+try:
+    from config import GITHUB_OWNER, GITHUB_REPO
+except Exception:
+    GITHUB_OWNER = "pasta0110"
+    GITHUB_REPO = "tam-auto-dash"
 
 def _format_dt_kst(dt):
     try:
