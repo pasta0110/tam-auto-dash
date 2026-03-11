@@ -19,67 +19,74 @@ def _month_key(d: pd.Series) -> pd.Series:
     return d.dt.strftime("%Y-%m")
 
 
-def _kpi_table(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
+def _kpi_table(delivery_df: pd.DataFrame) -> pd.DataFrame:
     """
     - 날짜 기준: 배송예정일
-    - 교환: 주문유형='AS' AND 배송유형='교환'
-    - 전체(분모): 주문유형='정상' (정상 유형 전체)
+    - AS: 배송유형='AS'
+    - 교환: 배송유형='교환'
+    - 반품: 배송유형 in ('반품','회수') 또는 주문유형='반품'
+    - 취소: 주문상태='주문취소'
     - 정상: 아래 기준 충족
       1) 주문유형 : 정상
       2) 주문상태 : 주문취소 빼고 다
       3) 배송유형 : 정상
       4) 배송상태 : 미설치 빼고 다
+
+    ✅ 전체는 아래 5개 버킷의 합으로 정의됩니다.
+       전체 = 정상 + AS + 교환 + 반품 + 취소
     """
-
-    # --- 주문(취소율) ---
-    o = order_df.copy()
-    o_dt = _safe_to_datetime(o["배송예정일"]) if "배송예정일" in o.columns else pd.Series([], dtype="datetime64[ns]")
-    if not o_dt.notna().any():
-        return pd.DataFrame()
-    o["연월_키"] = _month_key(o_dt)
-
-    o_norm = o[o["주문유형"].astype(str).eq("정상")].copy() if "주문유형" in o.columns else o.iloc[0:0].copy()
-    o_cancel = (
-        o_norm[o_norm["주문상태"].astype(str).eq("주문취소")].copy() if "주문상태" in o_norm.columns else o_norm.iloc[0:0].copy()
-    )
-
-    # --- 출고(AS/교환/반품) ---
     d = delivery_df.copy()
     d_dt = _safe_to_datetime(d["배송예정일"]) if "배송예정일" in d.columns else pd.Series([], dtype="datetime64[ns]")
     if not d_dt.notna().any():
         return pd.DataFrame()
     d["연월_키"] = _month_key(d_dt)
 
-    # 전체(분모): 정상 유형 전체 (주문유형=정상)
-    d_total = d[d["주문유형"].astype(str).str.contains("정상", na=False)].copy() if "주문유형" in d.columns else d.iloc[0:0].copy()
+    # (선택) 매출처 필터가 있으면 청호나이스만
+    if "매출처" in d.columns:
+        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
 
-    # 정상: 상세 조건 충족
-    d_ok = d_total.copy()
-    if "주문상태" in d_ok.columns:
-        d_ok = d_ok[~d_ok["주문상태"].astype(str).eq("주문취소")].copy()
-    if "배송유형" in d_ok.columns:
-        d_ok = d_ok[d_ok["배송유형"].astype(str).eq("정상")].copy()
-    if "배송상태" in d_ok.columns:
-        d_ok = d_ok[~d_ok["배송상태"].astype(str).eq("미설치")].copy()
+    # 버킷 마스크
+    # 취소(주문취소) 정의: 배송상태 == '미설치'
+    cancel_m = d["배송상태"].astype(str).eq("미설치") if "배송상태" in d.columns else pd.Series(False, index=d.index)
+    exchange_m = d["배송유형"].astype(str).eq("교환") if "배송유형" in d.columns else pd.Series(False, index=d.index)
+    as_m = d["배송유형"].astype(str).eq("AS") if "배송유형" in d.columns else pd.Series(False, index=d.index)
+    return_m = pd.Series(False, index=d.index)
+    if "배송유형" in d.columns:
+        return_m |= d["배송유형"].astype(str).isin(["반품", "회수"])
+    if "주문유형" in d.columns:
+        return_m |= d["주문유형"].astype(str).eq("반품")
 
-    # AS / 교환 / 반품
-    d_as = d[d["주문유형"].astype(str).eq("AS")].copy() if "주문유형" in d.columns else d.iloc[0:0].copy()
-    d_exchange = (
-        d_as[d_as["배송유형"].astype(str).eq("교환")].copy() if "배송유형" in d_as.columns else d_as.iloc[0:0].copy()
-    )
-    d_as_only = d_as.drop(index=d_exchange.index, errors="ignore")
-    d_return = d[d["주문유형"].astype(str).str.contains("반품", na=False)].copy() if "주문유형" in d.columns else d.iloc[0:0].copy()
+    normal_m = pd.Series(True, index=d.index)
+    if "주문유형" in d.columns:
+        normal_m &= d["주문유형"].astype(str).eq("정상")
+    if "주문상태" in d.columns:
+        normal_m &= ~d["주문상태"].astype(str).eq("주문취소")
+    if "배송유형" in d.columns:
+        normal_m &= d["배송유형"].astype(str).eq("정상")
+    if "배송상태" in d.columns:
+        normal_m &= ~d["배송상태"].astype(str).eq("미설치")
+
+    # 서로 겹치지 않게 우선순위로 분류
+    bucket = pd.Series("미분류", index=d.index)
+    bucket[cancel_m] = "취소"
+    bucket[(bucket == "미분류") & exchange_m] = "교환"
+    bucket[(bucket == "미분류") & as_m] = "AS"
+    bucket[(bucket == "미분류") & return_m] = "반품"
+    bucket[(bucket == "미분류") & normal_m] = "정상"
+    d["버킷"] = bucket
 
     # 월별 집계
-    months = sorted(set(o["연월_키"].dropna().unique()).union(set(d["연월_키"].dropna().unique())))
+    months = sorted(set(d["연월_키"].dropna().unique()))
     rows = []
     for m in months:
-        denom = int(d_total[d_total["연월_키"] == m].shape[0])
-        ok_cnt = int(d_ok[d_ok["연월_키"] == m].shape[0])
-        cancel = int(o_cancel[o_cancel["연월_키"] == m].shape[0])
-        as_cnt = int(d_as_only[d_as_only["연월_키"] == m].shape[0])
-        ex_cnt = int(d_exchange[d_exchange["연월_키"] == m].shape[0])
-        ret_cnt = int(d_return[d_return["연월_키"] == m].shape[0])
+        dm = d[d["연월_키"] == m]
+        ok_cnt = int((dm["버킷"] == "정상").sum())
+        as_cnt = int((dm["버킷"] == "AS").sum())
+        ex_cnt = int((dm["버킷"] == "교환").sum())
+        ret_cnt = int((dm["버킷"] == "반품").sum())
+        cancel = int((dm["버킷"] == "취소").sum())
+        unclassified = int((dm["버킷"] == "미분류").sum())
+        denom = ok_cnt + as_cnt + ex_cnt + ret_cnt + cancel
 
         def rate(n: int, d_: int) -> float:
             return (n / d_) if d_ else 0.0
@@ -93,6 +100,7 @@ def _kpi_table(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFram
                 "교환": ex_cnt,
                 "반품": ret_cnt,
                 "취소": cancel,
+                "미분류": unclassified,
                 "AS율": rate(as_cnt, denom),
                 "교환율": rate(ex_cnt, denom),
                 "반품율": rate(ret_cnt, denom),
@@ -116,7 +124,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
         st.info("데이터가 없어 KPI를 표시할 수 없습니다.")
         return
 
-    kpi_df = _kpi_table(order_df, delivery_df)
+    kpi_df = _kpi_table(delivery_df)
     if kpi_df.empty:
         st.info("KPI 계산에 필요한 날짜 컬럼(배송예정일)을 찾지 못했습니다.")
         return
@@ -141,6 +149,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     # 표 출력(전체)
     show = kpi_df.copy()
     show = show.set_index("월")
+    # 미분류는 검증용(표에는 숨기고 경고로만 사용)
+    unclassified_total = int(show["미분류"].sum()) if "미분류" in show.columns else 0
+    if "미분류" in show.columns:
+        show = show.drop(columns=["미분류"])
     show = show.rename(
         columns={
             "AS율": "AS율(%)",
@@ -154,6 +166,9 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             {c: "{:.2f}" for c in ["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"] if c in show.columns}
         )
     )
+
+    if unclassified_total:
+        st.warning(f"⚠️ 미분류 데이터가 {unclassified_total}건 있습니다. (전체 합계에는 포함되지 않음)")
 
     st.caption("날짜는 배송예정일 기준으로 집계합니다. '전체'는 정상(주문유형=정상) 유형 전체, '정상'은 상세 기준을 충족한 건입니다.")
 
@@ -196,9 +211,9 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             d_as_only = d_as.drop(index=d_exchange.index, errors="ignore")
             d_return = d_m[d_m.get("주문유형", "").astype(str).str.contains("반품", na=False)].copy() if "주문유형" in d_m.columns else d_m.iloc[0:0]
 
-            o_norm = o_m[o_m.get("주문유형", "").astype(str).eq("정상")].copy() if "주문유형" in o_m.columns else o_m.iloc[0:0]
-            o_cancel = (
-                o_norm[o_norm.get("주문상태", "").astype(str).eq("주문취소")].copy() if "주문상태" in o_norm.columns else o_norm.iloc[0:0]
+            # 취소 정의(배송상태=미설치) 기반으로 주문번호 집계
+            d_cancel = (
+                d_m[d_m.get("배송상태", "").astype(str).eq("미설치")].copy() if "배송상태" in d_m.columns else d_m.iloc[0:0]
             )
 
             def _counts(df: pd.DataFrame, label: str) -> pd.DataFrame:
@@ -209,7 +224,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             c_as = _counts(d_as_only, "AS")
             c_ex = _counts(d_exchange, "교환")
             c_ret = _counts(d_return, "반품")
-            c_can = _counts(o_cancel, "취소")
+            c_can = _counts(d_cancel, "취소")
 
             risk = None
             for part in [c_as, c_ex, c_ret, c_can]:
@@ -342,14 +357,19 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
     # 3) 취소율 높은 판매지국/판매인
     with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
-        if o_m.empty or "주문유형" not in o_m.columns or "주문상태" not in o_m.columns:
-            st.info("주문유형/주문상태 컬럼이 없어 표시할 수 없습니다.")
+        if o_m.empty or "주문유형" not in o_m.columns:
+            st.info("주문유형 컬럼이 없어 표시할 수 없습니다.")
         else:
             norm = o_m[o_m["주문유형"].astype(str).eq("정상")].copy()
             if norm.empty:
                 st.info("해당 월에 정상 주문이 없습니다.")
             else:
-                norm["is_cancel"] = norm["주문상태"].astype(str).eq("주문취소")
+                # 취소 정의(배송상태=미설치): delivery에서 주문번호를 뽑아 order에 매핑
+                if "주문번호" in norm.columns and "배송상태" in d_m.columns and "주문번호" in d_m.columns:
+                    cancel_orders = set(d_m.loc[d_m["배송상태"].astype(str).eq("미설치"), "주문번호"].dropna().astype(str).tolist())
+                    norm["is_cancel"] = norm["주문번호"].astype(str).isin(cancel_orders)
+                else:
+                    norm["is_cancel"] = False
 
                 def _rate_by(col: str) -> pd.DataFrame:
                     if col not in norm.columns:
