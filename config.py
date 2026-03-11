@@ -1,7 +1,10 @@
 # config.py
 # 전역 설정 및 스타일
 
-# 1. 데이터 소스 URL
+# 1. 데이터 소스
+# 로컬 ERP CSV가 있으면 우선 사용하고, 없을 때만 URL 엑셀을 사용합니다.
+ORDER_CSV_PATH = r"C:\Users\alcls\Documents\tam-auto-dash\order.csv"
+DELIVERY_CSV_PATH = r"C:\Users\alcls\Documents\tam-auto-dash\delivery.csv"
 DATA_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/data.xlsx"
 
 # 2. 지역별 센터 순서 (정렬 기준)
