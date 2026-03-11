@@ -413,8 +413,6 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     g["취소율(%)"] = (g["취소"] / g["정상"] * 100).round(2)
                     return g.sort_values(["취소", "취소율(%)"], ascending=False)
 
-                min_denom = st.number_input("최소 정상건수(필터)", min_value=1, max_value=99999, value=30, step=1, key="min_cancel_denom")
-
                 c1, c2 = st.columns(2)
                 with c1:
                     st.markdown("**판매지국 TOP**")
@@ -422,14 +420,14 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     if g.empty:
                         st.info("판매지국 컬럼이 없습니다.")
                     else:
-                        st.table(_styled_table(g[g["정상"] >= int(min_denom)].head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
+                        st.table(_styled_table(g.head(20), percent_cols=["취소율(%)"], int_cols=["정상", "취소"]))
                 with c2:
                     st.markdown("**판매인 TOP**")
                     g = _rate_by("판매인")
                     if g.empty:
                         st.info("판매인 컬럼이 없습니다.")
                     else:
-                        view = g[g["정상"] >= int(min_denom)].copy()
+                        view = g.copy()
                         if "판매지국" in norm.columns:
                             seller_to_branch = (
                                 norm.dropna(subset=["판매인"])
@@ -469,7 +467,8 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
             if cohort.empty:
                 st.info("해당 월(등록일 기준)에 정상 주문 실적이 없습니다.")
-                return
+                # expander 내에서만 종료
+                cohort = cohort.iloc[0:0].copy()
 
             # 정상 수량(분모): order_df의 '수량' (없으면 1로 간주)
             if "수량" not in cohort.columns:
@@ -494,9 +493,8 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 else:
                     ret_lines["수량"] = 1
 
-                join_keys = [k for k in ["주문번호", "상품코드"] if k in ret_lines.columns and k in cohort.columns]
-                if not join_keys:
-                    join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in cohort.columns]
+                # 주문 단위로 보는게 목적이므로 주문번호 기준 연결을 우선합니다.
+                join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in cohort.columns]
 
                 if join_keys:
                     ret_sum = ret_lines.groupby(join_keys, dropna=False)["수량"].sum().reset_index(name="반품수량")
@@ -509,49 +507,47 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 merged = cohort.copy()
                 merged["반품수량"] = 0
 
-                def _rate_by(col: str) -> pd.DataFrame:
-                    if col not in merged.columns:
-                        return pd.DataFrame()
-                    g = merged.groupby(col, dropna=False).agg(정상수량=("수량", "sum"), 반품수량=("반품수량", "sum")).reset_index()
-                    g["반품율(%)"] = (g["반품수량"] / g["정상수량"] * 100).round(2)
-                    return g.sort_values(["반품수량", "반품율(%)"], ascending=False)
+            def _rate_by(col: str) -> pd.DataFrame:
+                if col not in merged.columns:
+                    return pd.DataFrame()
+                g = merged.groupby(col, dropna=False).agg(정상수량=("수량", "sum"), 반품수량=("반품수량", "sum")).reset_index()
+                g["반품율(%)"] = (g["반품수량"] / g["정상수량"] * 100).round(2)
+                return g.sort_values(["반품수량", "반품율(%)"], ascending=False)
 
-                min_qty = st.number_input("최소 정상수량(필터)", min_value=1, max_value=999999, value=50, step=1, key="min_return_qty")
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**판매지국 TOP**")
-                    g = _rate_by("판매지국")
-                    if g.empty:
-                        st.info("판매지국 컬럼이 없습니다.")
-                    else:
-                        st.table(
-                            _styled_table(
-                                g[g["정상수량"] >= int(min_qty)].head(20),
-                                percent_cols=["반품율(%)"],
-                                int_cols=["정상수량", "반품수량"],
-                            )
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**판매지국 TOP**")
+                g = _rate_by("판매지국")
+                if g.empty:
+                    st.info("판매지국 컬럼이 없습니다.")
+                else:
+                    st.table(
+                        _styled_table(
+                            g.head(20),
+                            percent_cols=["반품율(%)"],
+                            int_cols=["정상수량", "반품수량"],
                         )
-                with c2:
-                    st.markdown("**판매인 TOP**")
-                    g = _rate_by("판매인")
-                    if g.empty:
-                        st.info("판매인 컬럼이 없습니다.")
+                    )
+            with c2:
+                st.markdown("**판매인 TOP**")
+                g = _rate_by("판매인")
+                if g.empty:
+                    st.info("판매인 컬럼이 없습니다.")
+                else:
+                    view = g.copy()
+                    if "판매지국" in merged.columns:
+                        seller_to_branch = (
+                            merged.dropna(subset=["판매인"])
+                            .groupby("판매인")["판매지국"]
+                            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                            .to_dict()
+                        )
+                        view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
+                        view["판매인 (판매지국)"] = view.apply(
+                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
+                            axis=1,
+                        )
+                        view = view[["판매인 (판매지국)", "정상수량", "반품수량", "반품율(%)"]]
                     else:
-                        view = g[g["정상수량"] >= int(min_qty)].copy()
-                        if "판매지국" in merged.columns:
-                            seller_to_branch = (
-                                merged.dropna(subset=["판매인"])
-                                .groupby("판매인")["판매지국"]
-                                .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
-                                .to_dict()
-                            )
-                            view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
-                            view["판매인 (판매지국)"] = view.apply(
-                                lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
-                                axis=1,
-                            )
-                            view = view[["판매인 (판매지국)", "정상수량", "반품수량", "반품율(%)"]]
-                        else:
-                            view = view[["판매인", "정상수량", "반품수량", "반품율(%)"]]
-                        st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["정상수량", "반품수량"]))
+                        view = view[["판매인", "정상수량", "반품수량", "반품율(%)"]]
+                    st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["정상수량", "반품수량"]))
