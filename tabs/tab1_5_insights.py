@@ -33,6 +33,12 @@ def _month_key(d: pd.Series) -> pd.Series:
     return d.dt.strftime("%Y-%m")
 
 
+def _month_key_from_date_col(df: pd.DataFrame, col: str) -> pd.Series:
+    if col not in df.columns:
+        return pd.Series([None] * len(df), index=df.index, dtype="object")
+    dt = _safe_to_datetime(df[col])
+    return dt.dt.strftime("%Y-%m")
+
 def _kpi_table(delivery_df: pd.DataFrame) -> pd.DataFrame:
     """
     - 날짜 기준: 배송예정일
@@ -443,47 +449,65 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
     # 4) 반품율 높은 판매지국/판매인 (반품 수량 기준)
     with st.expander("4) 반품율 높은 판매지국/판매인 (반품 수량 기준)", expanded=True):
-        if o_m.empty or "주문유형" not in o_m.columns:
+        if order_df is None or delivery_df is None:
+            st.info("데이터가 없어 표시할 수 없습니다.")
+        elif "주문유형" not in order_df.columns:
             st.info("주문유형 컬럼이 없어 표시할 수 없습니다.")
         else:
-            norm = o_m[o_m["주문유형"].astype(str).eq("정상")].copy()
-            if norm.empty:
-                st.info("해당 월에 정상 주문이 없습니다.")
-            else:
-                # 정상 수량(분모): order_df의 '수량' (없으면 1로 간주)
-                if "수량" not in norm.columns:
-                    norm["수량"] = 1
-                norm["수량"] = pd.to_numeric(norm["수량"], errors="coerce").fillna(1).astype(int)
+            # Cohort 기준: 조회 월에 '판매된' 건(등록일 기준)만 실적으로 잡고,
+            # 그 주문에서 파생된 반품(기간 무관)을 연결해서 "비정상 판매"를 평가합니다.
+            o_all = order_df.copy()
+            if "매출처" in o_all.columns:
+                o_all = o_all[o_all["매출처"].astype(str).eq("청호나이스")].copy()
 
-                # 반품 수량(분자): delivery에서 반품/회수 또는 주문유형 반품인 라인의 '수량' 합
-                ret_mask = pd.Series(False, index=d_m.index)
-                if "배송유형" in d_m.columns:
-                    ret_mask |= d_m["배송유형"].astype(str).isin(["반품", "회수"])
-                if "주문유형" in d_m.columns:
-                    ret_mask |= d_m["주문유형"].astype(str).eq("반품")
+            order_month = _month_key_from_date_col(o_all, "등록일")
+            cohort = o_all[(order_month == sel_month) & (o_all["주문유형"].astype(str).eq("정상"))].copy()
 
-                ret_lines = d_m[ret_mask].copy()
-                if not ret_lines.empty:
-                    if "수량" in ret_lines.columns:
-                        ret_lines["수량"] = pd.to_numeric(ret_lines["수량"], errors="coerce").fillna(1)
-                    else:
-                        ret_lines["수량"] = 1
+            # 분모는 정상 판매 실적(취소 제외)
+            if "주문상태" in cohort.columns:
+                cohort = cohort[~cohort["주문상태"].astype(str).eq("주문취소")].copy()
 
-                    # 주문번호+상품코드 기준으로 매핑(가능하면 더 정확)
-                    join_keys = [k for k in ["주문번호", "상품코드"] if k in ret_lines.columns and k in norm.columns]
-                    if not join_keys:
-                        join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in norm.columns]
+            if cohort.empty:
+                st.info("해당 월(등록일 기준)에 정상 주문 실적이 없습니다.")
+                return
 
-                    if join_keys:
-                        ret_sum = ret_lines.groupby(join_keys, dropna=False)["수량"].sum().reset_index(name="반품수량")
-                        merged = norm.merge(ret_sum, on=join_keys, how="left")
-                        merged["반품수량"] = merged["반품수량"].fillna(0)
-                    else:
-                        merged = norm.copy()
-                        merged["반품수량"] = 0
+            # 정상 수량(분모): order_df의 '수량' (없으면 1로 간주)
+            if "수량" not in cohort.columns:
+                cohort["수량"] = 1
+            cohort["수량"] = pd.to_numeric(cohort["수량"], errors="coerce").fillna(1).astype(int)
+
+            # 반품 라인(기간 무관): delivery 전체에서 반품/회수 또는 주문유형 반품
+            d_all = delivery_df.copy()
+            if "매출처" in d_all.columns:
+                d_all = d_all[d_all["매출처"].astype(str).eq("청호나이스")].copy()
+
+            ret_mask = pd.Series(False, index=d_all.index)
+            if "배송유형" in d_all.columns:
+                ret_mask |= d_all["배송유형"].astype(str).isin(["반품", "회수"])
+            if "주문유형" in d_all.columns:
+                ret_mask |= d_all["주문유형"].astype(str).eq("반품")
+
+            ret_lines = d_all[ret_mask].copy()
+            if not ret_lines.empty:
+                if "수량" in ret_lines.columns:
+                    ret_lines["수량"] = pd.to_numeric(ret_lines["수량"], errors="coerce").fillna(1)
                 else:
-                    merged = norm.copy()
+                    ret_lines["수량"] = 1
+
+                join_keys = [k for k in ["주문번호", "상품코드"] if k in ret_lines.columns and k in cohort.columns]
+                if not join_keys:
+                    join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in cohort.columns]
+
+                if join_keys:
+                    ret_sum = ret_lines.groupby(join_keys, dropna=False)["수량"].sum().reset_index(name="반품수량")
+                    merged = cohort.merge(ret_sum, on=join_keys, how="left")
+                    merged["반품수량"] = merged["반품수량"].fillna(0)
+                else:
+                    merged = cohort.copy()
                     merged["반품수량"] = 0
+            else:
+                merged = cohort.copy()
+                merged["반품수량"] = 0
 
                 def _rate_by(col: str) -> pd.DataFrame:
                     if col not in merged.columns:
