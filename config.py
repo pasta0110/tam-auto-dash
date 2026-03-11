@@ -2,9 +2,18 @@
 # 전역 설정 및 스타일
 
 # 1. 데이터 소스
-# 로컬 ERP CSV가 있으면 우선 사용하고, 없을 때만 URL 엑셀을 사용합니다.
-ORDER_CSV_PATH = r"C:\Users\alcls\Documents\tam-auto-dash\order.csv"
-DELIVERY_CSV_PATH = r"C:\Users\alcls\Documents\tam-auto-dash\delivery.csv"
+# 로컬(레포 내) ERP CSV가 있으면 우선 사용하고, 없을 때만 원격 URL을 사용합니다.
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ORDER_CSV_PATH = os.path.join(BASE_DIR, "order.csv")
+DELIVERY_CSV_PATH = os.path.join(BASE_DIR, "delivery.csv")
+
+# 원격 CSV (레포에 csv가 포함되어 있으면 보통 필요 없지만, 배포 환경 대비용)
+ORDER_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/order.csv"
+DELIVERY_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/delivery.csv"
+
+# (레거시) 원격 엑셀
 DATA_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/data.xlsx"
 
 # 2. 지역별 센터 순서 (정렬 기준)
