@@ -8,7 +8,7 @@ from data_loader import load_raw_data
 from data_processor import process_data
 
 # 탭 모듈 임포트 (각 기능을 담당)
-from tabs import tab1_summary, tab2_delivery, tab3_prediction, tab4_validation, tab5_map
+from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab3_prediction, tab4_validation, tab5_map
 
 # 1. 페이지 기본 설정 (가장 먼저 실행되어야 함)
 st.set_page_config(
@@ -32,8 +32,9 @@ if raw_order_df is not None and raw_delivery_df is not None:
     order_df, delivery_df, ana_df = process_data(raw_order_df, raw_delivery_df)
     
     # 5. 메인 UI 구성 (탭)
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab1_5, tab2, tab3, tab4, tab5 = st.tabs([
         "📋 1. 종합 현황", 
+        "📌 1.5 인사이트",
         "📈 2. 배송사별 분석", 
         "🚀 3. 당월 출고 예측", 
         "🔍 4. 예측 모델 검증", 
@@ -43,6 +44,9 @@ if raw_order_df is not None and raw_delivery_df is not None:
     # 각 탭에 필요한 데이터 전달 및 렌더링
     with tab1:
         tab1_summary.render(order_df, delivery_df, ana_df, ctx)
+
+    with tab1_5:
+        tab1_5_insights.render(order_df, delivery_df, ctx)
         
     with tab2:
         tab2_delivery.render(ana_df)
