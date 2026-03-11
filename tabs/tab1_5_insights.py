@@ -586,3 +586,22 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     else:
                         view = view[["판매인", "전체", "정상", "반품", "반품율(%)"]]
                     st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
+
+    # 5) 주문번호 결합 확인 (디버그)
+    with st.expander("5) 주문번호 결합 확인 (샘플)", expanded=False):
+        if om_all is None or om_all.empty:
+            st.info("결합된 데이터가 없습니다.")
+        else:
+            key = st.text_input("주문번호로 검색(선택)", value="", key="dbg_order_no")
+            dbg = om_all.copy()
+            if key.strip():
+                dbg = dbg[dbg["주문번호"].astype(str).str.contains(key.strip())].copy()
+            else:
+                dbg = dbg.head(30).copy()
+
+            cols = [c for c in ["연월_키", "주문번호", "최종상태", "정상(상세)", "취소발생", "AS발생", "교환발생", "반품발생", "판매인", "판매지국"] if c in dbg.columns]
+            if not cols:
+                st.info("표시할 컬럼이 없습니다.")
+            else:
+                view = dbg[cols].copy()
+                st.table(_styled_table(view, int_cols=["정상(상세)", "취소발생", "AS발생", "교환발생", "반품발생"]))
