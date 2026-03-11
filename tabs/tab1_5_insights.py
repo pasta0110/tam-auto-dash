@@ -126,3 +126,162 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
     st.caption("분모는 정상(주문유형=정상) 기준이며, 날짜는 배송예정일 기준으로 기준일(어제)까지 집계합니다.")
 
+    # ==========================
+    # 의사결정용 표시 (드릴다운)
+    # ==========================
+
+    st.divider()
+    st.subheader("🧭 의사결정용 표시")
+
+    cutoff_day = cutoff.date()
+
+    # 공통: 선택 월 데이터 슬라이스 (배송예정일 기준, 기준일(어제)까지)
+    o = order_df.copy()
+    if "배송예정일" in o.columns:
+        o_dt = _safe_to_datetime(o["배송예정일"])
+        o = o[o_dt.dt.date <= cutoff_day].copy()
+        o["연월_키"] = _month_key(o_dt)
+    else:
+        o = o.iloc[0:0].copy()
+
+    d = delivery_df.copy()
+    if "배송예정일" in d.columns:
+        d_dt = _safe_to_datetime(d["배송예정일"])
+        d = d[d_dt.dt.date <= cutoff_day].copy()
+        d["연월_키"] = _month_key(d_dt)
+    else:
+        d = d.iloc[0:0].copy()
+
+    o_m = o[o.get("연월_키", "") == sel_month].copy()
+    d_m = d[d.get("연월_키", "") == sel_month].copy()
+
+    # 1) 리스크 TOP 주문번호 리스트
+    with st.expander("1) 리스크 TOP 주문번호 (AS/교환/반품/취소)", expanded=True):
+        required = {"주문번호"}
+        if not required.issubset(set(o_m.columns).union(set(d_m.columns))):
+            st.info("주문번호 컬럼이 없어 표시할 수 없습니다.")
+        else:
+            # 분모(정상) 기준: 정상 주문에서 파생된 이슈를 주문번호 단위로 집계
+            d_as = d_m[d_m.get("주문유형", "").astype(str).eq("AS")].copy() if "주문유형" in d_m.columns else d_m.iloc[0:0]
+            d_exchange = (
+                d_as[d_as.get("배송유형", "").astype(str).eq("교환")].copy() if "배송유형" in d_as.columns else d_as.iloc[0:0]
+            )
+            d_as_only = d_as.drop(index=d_exchange.index, errors="ignore")
+            d_return = d_m[d_m.get("주문유형", "").astype(str).str.contains("반품", na=False)].copy() if "주문유형" in d_m.columns else d_m.iloc[0:0]
+
+            o_norm = o_m[o_m.get("주문유형", "").astype(str).eq("정상")].copy() if "주문유형" in o_m.columns else o_m.iloc[0:0]
+            o_cancel = (
+                o_norm[o_norm.get("주문상태", "").astype(str).eq("주문취소")].copy() if "주문상태" in o_norm.columns else o_norm.iloc[0:0]
+            )
+
+            def _counts(df: pd.DataFrame, label: str) -> pd.DataFrame:
+                if df is None or df.empty or "주문번호" not in df.columns:
+                    return pd.DataFrame(columns=["주문번호", label])
+                return df.groupby("주문번호", dropna=False).size().reset_index(name=label)
+
+            c_as = _counts(d_as_only, "AS")
+            c_ex = _counts(d_exchange, "교환")
+            c_ret = _counts(d_return, "반품")
+            c_can = _counts(o_cancel, "취소")
+
+            risk = None
+            for part in [c_as, c_ex, c_ret, c_can]:
+                risk = part if risk is None else risk.merge(part, on="주문번호", how="outer")
+            risk = risk.fillna(0)
+            for col in ["AS", "교환", "반품", "취소"]:
+                if col in risk.columns:
+                    risk[col] = risk[col].astype(int)
+                else:
+                    risk[col] = 0
+
+            # 단순 스코어: AS/교환/반품은 2점, 취소는 1점 (원하면 나중에 조정)
+            risk["리스크점수"] = (risk["AS"] + risk["교환"] + risk["반품"]) * 2 + risk["취소"] * 1
+            risk = risk.sort_values(["리스크점수", "반품", "교환", "AS", "취소"], ascending=False)
+
+            top_n = st.slider("표시 개수", 5, 50, 15, key="risk_top_n")
+            out = risk.head(top_n).copy()
+            if out.empty:
+                st.info("해당 월에 리스크 이벤트가 없습니다.")
+            else:
+                st.dataframe(out, width="stretch", hide_index=True)
+
+    # 2) AS/교환 급증 상품코드
+    with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
+        if "상품코드" not in d.columns or "주문유형" not in d.columns:
+            st.info("상품코드/주문유형 컬럼이 없어 표시할 수 없습니다.")
+        else:
+            months_sorted = sorted(d["연월_키"].dropna().unique().tolist())
+            prev_month = None
+            if sel_month in months_sorted:
+                idx = months_sorted.index(sel_month)
+                prev_month = months_sorted[idx - 1] if idx > 0 else None
+
+            if prev_month is None:
+                st.info("전월 데이터가 없어 급증 비교를 할 수 없습니다.")
+            else:
+                d_prev = d[d["연월_키"] == prev_month].copy()
+
+                def _issue_counts(df: pd.DataFrame) -> pd.DataFrame:
+                    as_df = df[df["주문유형"].astype(str).eq("AS")].copy()
+                    ex_df = as_df[as_df.get("배송유형", "").astype(str).eq("교환")].copy() if "배송유형" in as_df.columns else as_df.iloc[0:0]
+                    as_only = as_df.drop(index=ex_df.index, errors="ignore")
+
+                    as_c = as_only.groupby("상품코드").size().rename("AS").reset_index()
+                    ex_c = ex_df.groupby("상품코드").size().rename("교환").reset_index()
+                    out = as_c.merge(ex_c, on="상품코드", how="outer").fillna(0)
+                    out["AS"] = out["AS"].astype(int)
+                    out["교환"] = out["교환"].astype(int)
+                    out["총이슈"] = out["AS"] + out["교환"]
+                    return out
+
+                cur = _issue_counts(d_m)
+                prev = _issue_counts(d_prev)
+                merged = cur.merge(prev, on="상품코드", how="outer", suffixes=("_이번달", "_전월")).fillna(0)
+                for c in ["AS_이번달", "교환_이번달", "총이슈_이번달", "AS_전월", "교환_전월", "총이슈_전월"]:
+                    merged[c] = merged[c].astype(int)
+                merged["증가"] = merged["총이슈_이번달"] - merged["총이슈_전월"]
+
+                min_cur = st.number_input("이번달 최소 이슈건수", min_value=1, max_value=9999, value=3, step=1, key="min_cur_issues")
+                cand = merged[(merged["총이슈_이번달"] >= int(min_cur)) & (merged["증가"] > 0)].copy()
+                cand = cand.sort_values(["증가", "총이슈_이번달"], ascending=False)
+
+                if cand.empty:
+                    st.info("전월 대비 급증한 상품코드가 없습니다.")
+                else:
+                    st.dataframe(cand.head(30), width="stretch", hide_index=True)
+
+    # 3) 취소율 높은 판매지국/판매인
+    with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
+        if o_m.empty or "주문유형" not in o_m.columns or "주문상태" not in o_m.columns:
+            st.info("주문유형/주문상태 컬럼이 없어 표시할 수 없습니다.")
+        else:
+            norm = o_m[o_m["주문유형"].astype(str).eq("정상")].copy()
+            if norm.empty:
+                st.info("해당 월에 정상 주문이 없습니다.")
+            else:
+                norm["is_cancel"] = norm["주문상태"].astype(str).eq("주문취소")
+
+                def _rate_by(col: str) -> pd.DataFrame:
+                    if col not in norm.columns:
+                        return pd.DataFrame()
+                    g = norm.groupby(col, dropna=False).agg(정상=("is_cancel", "size"), 취소=("is_cancel", "sum")).reset_index()
+                    g["취소율(%)"] = (g["취소"] / g["정상"] * 100).round(2)
+                    return g.sort_values(["취소율(%)", "취소"], ascending=False)
+
+                min_denom = st.number_input("최소 정상건수(필터)", min_value=1, max_value=99999, value=30, step=1, key="min_cancel_denom")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**판매지국 TOP**")
+                    g = _rate_by("판매지국")
+                    if g.empty:
+                        st.info("판매지국 컬럼이 없습니다.")
+                    else:
+                        st.dataframe(g[g["정상"] >= int(min_denom)].head(20), width="stretch", hide_index=True)
+                with c2:
+                    st.markdown("**판매인 TOP**")
+                    g = _rate_by("판매인")
+                    if g.empty:
+                        st.info("판매인 컬럼이 없습니다.")
+                    else:
+                        st.dataframe(g[g["정상"] >= int(min_denom)].head(20), width="stretch", hide_index=True)
