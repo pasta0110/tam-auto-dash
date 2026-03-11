@@ -4,7 +4,7 @@
 import streamlit as st
 import config
 from utils.date_utils import get_current_context
-from data_loader import load_raw_data
+from data_loader import load_raw_data, get_data_snapshot_info
 from data_processor import process_data
 
 # 탭 모듈 임포트 (각 기능을 담당)
@@ -23,9 +23,26 @@ st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
 raw_order_df, raw_delivery_df = load_raw_data()
+snapshot = get_data_snapshot_info()
 
 # 4. 날짜 컨텍스트 확보 (오늘, 어제, 이번 달 등)
 ctx = get_current_context()
+
+if snapshot:
+    parts = []
+    if snapshot.get("order_source") == "local":
+        parts.append(f"order.csv=local ({snapshot.get('order_mtime_kst')})")
+    else:
+        lm = snapshot.get("order_last_modified")
+        parts.append(f"order.csv=github (Last-Modified: {lm})")
+
+    if snapshot.get("delivery_source") == "local":
+        parts.append(f"delivery.csv=local ({snapshot.get('delivery_mtime_kst')})")
+    else:
+        lm = snapshot.get("delivery_last_modified")
+        parts.append(f"delivery.csv=github (Last-Modified: {lm})")
+
+    st.caption("데이터 스냅샷: " + " | ".join(parts))
 
 if raw_order_df is not None and raw_delivery_df is not None:
     # 데이터 가공 (컬럼 추가, 필터링 등)

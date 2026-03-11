@@ -14,6 +14,74 @@ from config import (
     DELIVERY_CSV_URL,
 )
 
+def _format_dt_kst(dt):
+    try:
+        from zoneinfo import ZoneInfo
+        import datetime
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST")
+    except Exception:
+        return str(dt)
+
+
+def _http_last_modified(url: str):
+    try:
+        r = requests.head(url, timeout=10, allow_redirects=True)
+        lm = r.headers.get("Last-Modified")
+        etag = r.headers.get("ETag")
+        return {"last_modified": lm, "etag": etag}
+    except Exception:
+        return {"last_modified": None, "etag": None}
+
+
+@st.cache_data(ttl=60)
+def get_data_snapshot_info():
+    """
+    UI용: 현재 앱이 보고 있는 CSV의 스냅샷 정보를 반환합니다.
+    - 로컬 파일이 있으면 로컬 mtime
+    - 아니면 GitHub raw의 Last-Modified 헤더(있으면)
+    """
+    info = {}
+
+    if os.path.exists(ORDER_CSV_PATH):
+        info["order_source"] = "local"
+        info["order_path_or_url"] = ORDER_CSV_PATH
+        try:
+            import datetime
+
+            dt = datetime.datetime.fromtimestamp(os.path.getmtime(ORDER_CSV_PATH))
+            info["order_mtime_kst"] = _format_dt_kst(dt)
+        except Exception:
+            info["order_mtime_kst"] = None
+    else:
+        info["order_source"] = "remote"
+        info["order_path_or_url"] = ORDER_CSV_URL
+        meta = _http_last_modified(ORDER_CSV_URL)
+        info["order_last_modified"] = meta["last_modified"]
+        info["order_etag"] = meta["etag"]
+
+    if os.path.exists(DELIVERY_CSV_PATH):
+        info["delivery_source"] = "local"
+        info["delivery_path_or_url"] = DELIVERY_CSV_PATH
+        try:
+            import datetime
+
+            dt = datetime.datetime.fromtimestamp(os.path.getmtime(DELIVERY_CSV_PATH))
+            info["delivery_mtime_kst"] = _format_dt_kst(dt)
+        except Exception:
+            info["delivery_mtime_kst"] = None
+    else:
+        info["delivery_source"] = "remote"
+        info["delivery_path_or_url"] = DELIVERY_CSV_URL
+        meta = _http_last_modified(DELIVERY_CSV_URL)
+        info["delivery_last_modified"] = meta["last_modified"]
+        info["delivery_etag"] = meta["etag"]
+
+    return info
+
+
 @st.cache_data(ttl=300)
 def load_raw_data():
     """
