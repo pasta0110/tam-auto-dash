@@ -50,18 +50,32 @@ session = requests.Session()
 today = datetime.today()
 start_date = "2025-02-01"
 
-# 당월 말일
-last_day = calendar.monthrange(today.year, today.month)[1]
-month_end = datetime(today.year, today.month, last_day)
+def _shift_month(year: int, month: int, delta_months: int):
+    m = month + delta_months
+    y = year + (m - 1) // 12
+    m = ((m - 1) % 12) + 1
+    return y, m
 
-# +3개월
-future_month = today.month + 3
-future_year = today.year + (future_month - 1) // 12
-future_month = ((future_month - 1) % 12) + 1
 
-future_last_day = calendar.monthrange(future_year, future_month)[1]
+def _month_range_ym(year: int, month: int):
+    first = datetime(year, month, 1)
+    last_day = calendar.monthrange(year, month)[1]
+    last = datetime(year, month, last_day)
+    return first, last
 
-end_date = f"{future_year}-{future_month:02d}-{future_last_day}"
+
+# 출고(배송) 조회 기간: 기존 유지 (고정 시작 ~ 당월 기준 +3개월 말일)
+future_year, future_month = _shift_month(today.year, today.month, 3)
+_, future_last = _month_range_ym(future_year, future_month)
+end_date = future_last.strftime("%Y-%m-%d")
+
+# 주문 조회 기간: 당월 기준 -6개월 1일 ~ +3개월 말일
+order_start_y, order_start_m = _shift_month(today.year, today.month, -6)
+order_end_y, order_end_m = _shift_month(today.year, today.month, 3)
+order_start, _ = _month_range_ym(order_start_y, order_start_m)
+_, order_end = _month_range_ym(order_end_y, order_end_m)
+order_start_date = order_start.strftime("%Y-%m-%d")
+order_end_date = order_end.strftime("%Y-%m-%d")
 
 # ==========================================
 # 2. ERP CSV 다운로드
@@ -200,8 +214,8 @@ def download_erp_csv():
     # =========================
 
     order_p = {
-        "order_date_from": start_date,
-        "order_date_to": end_date,
+        "order_date_from": order_start_date,
+        "order_date_to": order_end_date,
         "url": "/order/orderList.do",
         "id": "order_list",
         "non_target": "0",
