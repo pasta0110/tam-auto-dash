@@ -8,6 +8,12 @@ import streamlit as st
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, errors="coerce")
 
+def _center_style(df: pd.DataFrame):
+    return (
+        df.style.set_properties(**{"text-align": "center"})
+        .set_table_styles([{"selector": "th", "props": [("text-align", "center")]}])
+    )
+
 
 def _month_key(d: pd.Series) -> pd.Series:
     return d.dt.strftime("%Y-%m")
@@ -111,7 +117,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
     show = kpi_df.copy()
     show = show.set_index("월")
     st.dataframe(
-        show,
+        _center_style(show),
         width="stretch",
         hide_index=False,
     )
@@ -194,6 +200,28 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 else:
                     risk[col] = 0
 
+            # 고객명 매핑 (order 우선, 없으면 delivery)
+            name_map = {}
+            if "주문번호" in o_m.columns and "수취인" in o_m.columns:
+                name_map.update(
+                    o_m.dropna(subset=["주문번호"])
+                    .groupby("주문번호")["수취인"]
+                    .agg(lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else "")
+                    .to_dict()
+                )
+            if "주문번호" in d_m.columns and "수취인" in d_m.columns:
+                name_map.update(
+                    d_m.dropna(subset=["주문번호"])
+                    .groupby("주문번호")["수취인"]
+                    .agg(lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else "")
+                    .to_dict()
+                )
+            risk["고객명"] = risk["주문번호"].map(name_map).fillna("")
+            risk["주문번호 (고객명)"] = risk.apply(
+                lambda r: f"{r['주문번호']} ({r['고객명']})" if str(r.get("고객명", "")).strip() else str(r["주문번호"]),
+                axis=1,
+            )
+
             # 단순 스코어: AS/교환/반품은 2점, 취소는 1점 (원하면 나중에 조정)
             risk["리스크점수"] = (risk["AS"] + risk["교환"] + risk["반품"]) * 2 + risk["취소"] * 1
             risk = risk.sort_values(["리스크점수", "반품", "교환", "AS", "취소"], ascending=False)
@@ -203,7 +231,8 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             if out.empty:
                 st.info("해당 월에 리스크 이벤트가 없습니다.")
             else:
-                st.dataframe(out, width="stretch", hide_index=True)
+                view = out[["주문번호 (고객명)", "리스크점수", "AS", "교환", "반품", "취소"]].copy()
+                st.dataframe(_center_style(view), width="stretch", hide_index=True)
 
     # 2) AS/교환 급증 상품코드
     with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
@@ -248,7 +277,47 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 if cand.empty:
                     st.info("전월 대비 급증한 상품코드가 없습니다.")
                 else:
-                    st.dataframe(cand.head(30), width="stretch", hide_index=True)
+                    # 상품명 매핑 (이번달 우선)
+                    name_df = d_m.copy()
+                    if "상품코드" in name_df.columns and "상품명" in name_df.columns:
+                        code_to_name = (
+                            name_df.dropna(subset=["상품코드"])
+                            .groupby("상품코드")["상품명"]
+                            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                            .to_dict()
+                        )
+                    else:
+                        code_to_name = {}
+
+                    view = cand.head(30).copy()
+                    view["상품명"] = view["상품코드"].map(code_to_name).fillna("")
+                    view["상품코드 (상품명)"] = view.apply(
+                        lambda r: f"{r['상품코드']} ({r['상품명']})" if str(r.get('상품명','')).strip() else str(r["상품코드"]),
+                        axis=1,
+                    )
+                    view = view[
+                        [
+                            "상품코드 (상품명)",
+                            "증가",
+                            "총이슈_이번달",
+                            "총이슈_전월",
+                            "AS_이번달",
+                            "교환_이번달",
+                            "AS_전월",
+                            "교환_전월",
+                        ]
+                    ].copy()
+                    view = view.rename(
+                        columns={
+                            "총이슈_이번달": "총이슈(이번달)",
+                            "총이슈_전월": "총이슈(전월)",
+                            "AS_이번달": "AS(이번달)",
+                            "교환_이번달": "교환(이번달)",
+                            "AS_전월": "AS(전월)",
+                            "교환_전월": "교환(전월)",
+                        }
+                    )
+                    st.dataframe(_center_style(view), width="stretch", hide_index=True)
 
     # 3) 취소율 높은 판매지국/판매인
     with st.expander("3) 취소율 높은 판매지국/판매인 (정상 분모 기준)", expanded=True):
@@ -284,4 +353,20 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     if g.empty:
                         st.info("판매인 컬럼이 없습니다.")
                     else:
-                        st.dataframe(g[g["정상"] >= int(min_denom)].head(20), width="stretch", hide_index=True)
+                        view = g[g["정상"] >= int(min_denom)].copy()
+                        if "판매지국" in norm.columns:
+                            seller_to_branch = (
+                                norm.dropna(subset=["판매인"])
+                                .groupby("판매인")["판매지국"]
+                                .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                                .to_dict()
+                            )
+                            view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
+                            view["판매인 (판매지국)"] = view.apply(
+                                lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
+                                axis=1,
+                            )
+                            view = view[["판매인 (판매지국)", "정상", "취소", "취소율(%)"]]
+                        else:
+                            view = view[["판매인", "정상", "취소", "취소율(%)"]]
+                        st.dataframe(_center_style(view.head(20)), width="stretch", hide_index=True)
