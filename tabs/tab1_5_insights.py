@@ -411,3 +411,88 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         else:
                             view = view[["판매인", "정상", "취소", "취소율(%)"]]
                         st.table(_center_style(view.head(20)))
+
+    # 4) 반품율 높은 판매지국/판매인 (반품 수량 기준)
+    with st.expander("4) 반품율 높은 판매지국/판매인 (반품 수량 기준)", expanded=True):
+        if o_m.empty or "주문유형" not in o_m.columns:
+            st.info("주문유형 컬럼이 없어 표시할 수 없습니다.")
+        else:
+            norm = o_m[o_m["주문유형"].astype(str).eq("정상")].copy()
+            if norm.empty:
+                st.info("해당 월에 정상 주문이 없습니다.")
+            else:
+                # 정상 수량(분모): order_df의 '수량' (없으면 1로 간주)
+                if "수량" not in norm.columns:
+                    norm["수량"] = 1
+                norm["수량"] = pd.to_numeric(norm["수량"], errors="coerce").fillna(1).astype(int)
+
+                # 반품 수량(분자): delivery에서 반품/회수 또는 주문유형 반품인 라인의 '수량' 합
+                ret_mask = pd.Series(False, index=d_m.index)
+                if "배송유형" in d_m.columns:
+                    ret_mask |= d_m["배송유형"].astype(str).isin(["반품", "회수"])
+                if "주문유형" in d_m.columns:
+                    ret_mask |= d_m["주문유형"].astype(str).eq("반품")
+
+                ret_lines = d_m[ret_mask].copy()
+                if not ret_lines.empty:
+                    if "수량" in ret_lines.columns:
+                        ret_lines["수량"] = pd.to_numeric(ret_lines["수량"], errors="coerce").fillna(1)
+                    else:
+                        ret_lines["수량"] = 1
+
+                    # 주문번호+상품코드 기준으로 매핑(가능하면 더 정확)
+                    join_keys = [k for k in ["주문번호", "상품코드"] if k in ret_lines.columns and k in norm.columns]
+                    if not join_keys:
+                        join_keys = [k for k in ["주문번호"] if k in ret_lines.columns and k in norm.columns]
+
+                    if join_keys:
+                        ret_sum = ret_lines.groupby(join_keys, dropna=False)["수량"].sum().reset_index(name="반품수량")
+                        merged = norm.merge(ret_sum, on=join_keys, how="left")
+                        merged["반품수량"] = merged["반품수량"].fillna(0)
+                    else:
+                        merged = norm.copy()
+                        merged["반품수량"] = 0
+                else:
+                    merged = norm.copy()
+                    merged["반품수량"] = 0
+
+                def _rate_by(col: str) -> pd.DataFrame:
+                    if col not in merged.columns:
+                        return pd.DataFrame()
+                    g = merged.groupby(col, dropna=False).agg(정상수량=("수량", "sum"), 반품수량=("반품수량", "sum")).reset_index()
+                    g["반품율(%)"] = (g["반품수량"] / g["정상수량"] * 100).round(2)
+                    return g.sort_values(["반품율(%)", "반품수량"], ascending=False)
+
+                min_qty = st.number_input("최소 정상수량(필터)", min_value=1, max_value=999999, value=50, step=1, key="min_return_qty")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**판매지국 TOP**")
+                    g = _rate_by("판매지국")
+                    if g.empty:
+                        st.info("판매지국 컬럼이 없습니다.")
+                    else:
+                        st.table(_center_style(g[g["정상수량"] >= int(min_qty)].head(20)))
+                with c2:
+                    st.markdown("**판매인 TOP**")
+                    g = _rate_by("판매인")
+                    if g.empty:
+                        st.info("판매인 컬럼이 없습니다.")
+                    else:
+                        view = g[g["정상수량"] >= int(min_qty)].copy()
+                        if "판매지국" in merged.columns:
+                            seller_to_branch = (
+                                merged.dropna(subset=["판매인"])
+                                .groupby("판매인")["판매지국"]
+                                .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                                .to_dict()
+                            )
+                            view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
+                            view["판매인 (판매지국)"] = view.apply(
+                                lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get('판매지국','')).strip() else str(r["판매인"]),
+                                axis=1,
+                            )
+                            view = view[["판매인 (판매지국)", "정상수량", "반품수량", "반품율(%)"]]
+                        else:
+                            view = view[["판매인", "정상수량", "반품수량", "반품율(%)"]]
+                        st.table(_center_style(view.head(20)))
