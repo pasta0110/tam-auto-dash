@@ -86,6 +86,7 @@ def render(ana_df):
 
         df_view = total_compare[total_compare['연월_키'].isin(view_months)].copy()
         monthly_totals = df_view.groupby('연월_키')['완료건수'].sum()
+        month_labels = [f"{m}<br>[총 합계: {int(monthly_totals.get(m, 0)):,}건]" for m in view_months]
 
         # 3. 절대 눕지 않는 막대 그래프
         fig_bar = go.Figure()
@@ -104,20 +105,20 @@ def render(ana_df):
                 total = monthly_totals.get(m, 1)
                 share = round((val / total) * 100, 1)
                 y_vals.append(val)
-                texts.append(f"{val:,}건\n({share}%)")
+                texts.append(f"{val:,}건<br>({share}%)")
 
             fig_bar.add_trace(go.Bar(
                 name=center,
-                x=view_months,
+                x=[month_labels, [center for _ in view_months]],
                 y=y_vals,
                 text=texts,
                 textposition='outside',
                 marker_color=colors[i % len(colors)],
-                textfont=dict(size=12, family="Malgun Gothic"),
+                textfont=dict(size=15, family="Malgun Gothic", color="#2f3e46"),
                 customdata=[monthly_totals.get(m, 0) for m in view_months],
                 hovertemplate=(
-                    "월: %{x}<br>"
-                    "배송사: " + center + "<br>"
+                    "월: %{x[0]}<br>"
+                    "배송사: %{x[1]}<br>"
                     "완료건수: %{y:,}건<br>"
                     "월 총합: %{customdata:,}건<extra></extra>"
                 ),
@@ -126,12 +127,14 @@ def render(ana_df):
         fig_bar.update_layout(
             barmode='group',
             margin=dict(t=80, b=80),
-            xaxis=dict(title="", tickfont=dict(size=14, family="Malgun Gothic")),
+            xaxis=dict(title="", tickfont=dict(size=15, family="Malgun Gothic")),
             yaxis_title="완료건수",
             legend=dict(orientation="h", yanchor="bottom", y=1.1, xanchor="right", x=1),
-            font=dict(family="Malgun Gothic")
+            font=dict(family="Malgun Gothic"),
+            uniformtext_minsize=11,
+            uniformtext_mode="hide",
         )
-        fig_bar.update_xaxes(type="category")
+        fig_bar.update_xaxes(type="multicategory")
         st.plotly_chart(fig_bar, use_container_width=True, key="paged_bar_chart_final")
 
     else:
