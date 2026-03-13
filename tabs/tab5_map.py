@@ -45,6 +45,40 @@ def _mask_addr(v: str) -> str:
     return " ".join(tokens[:2]) + " ..."
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _build_delay_df_cached(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if "주문등록일" not in df.columns or "배송예정일" not in df.columns:
+        return pd.DataFrame()
+
+    tmp = df.copy()
+    tmp["주문등록일"] = pd.to_datetime(tmp["주문등록일"], errors="coerce")
+    tmp["배송예정일"] = pd.to_datetime(tmp["배송예정일"], errors="coerce")
+    tmp = tmp.dropna(subset=["주문등록일", "배송예정일"]).copy()
+    if tmp.empty:
+        return pd.DataFrame()
+
+    start_dates = tmp["주문등록일"].values.astype("datetime64[D]")
+    end_dates = tmp["배송예정일"].values.astype("datetime64[D]")
+    delay_days = np.busday_count(start_dates, end_dates + np.timedelta64(1, "D"))
+    tmp["영업배송일수"] = np.maximum(delay_days, 0)
+
+    def get_delivery_status(row):
+        days = row["영업배송일수"]
+        carrier = str(row["배송사_정제"])
+        is_capital = "수도권" in carrier or "수도" in carrier
+        standard_days = 3 if is_capital else 4
+        if days <= standard_days:
+            return "green"
+        if days <= standard_days + 2:
+            return "orange"
+        return "red"
+
+    tmp["상태"] = tmp.apply(get_delivery_status, axis=1)
+    return tmp
+
+
 def render(ana_df):
     st.title("📍 전국 실시간 배송 밀집도 (AI 분석)")
     st.markdown("브이월드 API와 AI 알고리즘을 활용하여 **배송 속도(영업일 기준), 물류사 분포, 상품별 수요**를 시각적으로 분석합니다.")
@@ -201,29 +235,7 @@ def render(ana_df):
                     st.warning("주문등록일 컬럼이 없어 배송 소요시간 분석을 실행할 수 없습니다.")
                     delay_df_final = pd.DataFrame()
                 else:
-                # 날짜 처리 및 영업일 계산
-                    final_map_df['주문등록일'] = pd.to_datetime(final_map_df['주문등록일'], errors='coerce')
-                    final_map_df['배송예정일'] = pd.to_datetime(final_map_df['배송예정일'], errors='coerce')
-                    delay_df = final_map_df.dropna(subset=['주문등록일', '배송예정일']).copy()
-
-                    start_dates = delay_df['주문등록일'].values.astype('datetime64[D]')
-                    end_dates = delay_df['배송예정일'].values.astype('datetime64[D]')
-                    # 포함 기준(시작~종료일 포함) + 음수 방지
-                    delay_days = np.busday_count(start_dates, end_dates + np.timedelta64(1, 'D'))
-                    delay_df['영업배송일수'] = np.maximum(delay_days, 0)
-
-                    # 납기 상태 분류 함수
-                    def get_delivery_status(row):
-                        days = row['영업배송일수']
-                        carrier = str(row['배송사_정제'])
-                        is_capital = "수도권" in carrier or "수도" in carrier
-                        standard_days = 3 if is_capital else 4
-
-                        if days <= standard_days: return 'green'
-                        elif days <= standard_days + 2: return 'orange'
-                        else: return 'red'
-
-                    delay_df['상태'] = delay_df.apply(get_delivery_status, axis=1)
+                    delay_df = _build_delay_df_cached(final_map_df)
 
                     # [UI] 상태별 필터링
                     with col_map:
@@ -258,10 +270,14 @@ def render(ana_df):
                     
                     coords = final_map_df[['lat', 'lon']].values
                     if len(coords) > 0 and DBSCAN is not None:
-                        dbscan = DBSCAN(eps=0.05, min_samples=10).fit(coords)
-                        final_map_df['cluster'] = dbscan.labels_
-                        cluster_centers = final_map_df[final_map_df['cluster'] != -1].groupby('cluster')[['lat', 'lon']].mean().reset_index()
-                        cluster_centers['count'] = final_map_df[final_map_df['cluster'] != -1].groupby('cluster')['search_addr'].count().values
+                        # 대량 포인트에서는 샘플링해서 군집 계산 시간을 줄임
+                        cluster_src = final_map_df if len(final_map_df) <= 6000 else final_map_df.sample(6000, random_state=42)
+                        c_coords = cluster_src[['lat', 'lon']].values
+                        dbscan = DBSCAN(eps=0.05, min_samples=10).fit(c_coords)
+                        cluster_src = cluster_src.copy()
+                        cluster_src['cluster'] = dbscan.labels_
+                        cluster_centers = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')[['lat', 'lon']].mean().reset_index()
+                        cluster_centers['count'] = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')['search_addr'].count().values
                         
                         for _, row in cluster_centers.iterrows():
                             folium.Marker(
@@ -278,16 +294,9 @@ def render(ana_df):
                     
                     # 1. 정상/주의 (Green/Orange) -> FastMarkerCluster 또는 CircleMarker (가볍게)
                     non_red_df = delay_df_final[delay_df_final['상태'] != 'red']
-                    for _, row in non_red_df.iterrows():
-                        color = row['상태']
-                        folium.CircleMarker(
-                            location=[row['lat'], row['lon']],
-                            radius=3, # 작게
-                            color=color,
-                            fill=True,
-                            fill_opacity=0.5,
-                            popup=f"[{row['배송사_정제']}] {int(row['영업배송일수'])}일"
-                        ).add_to(m)
+                    if not non_red_df.empty:
+                        # 비적색은 클러스터로 렌더링해 성능 확보
+                        FastMarkerCluster(data=non_red_df[['lat', 'lon']].values.tolist()).add_to(m)
                         
                     # 2. 지연 (Red) -> MarkerCluster (상세 정보 팝업)
                     red_df = delay_df_final[delay_df_final['상태'] == 'red']
@@ -323,7 +332,9 @@ def render(ana_df):
                     colors = ['blue', 'green', 'red', 'purple', 'orange', 'darkblue', 'darkgreen', 'cadetblue']
                     carrier_colors = {carrier: colors[i % len(colors)] for i, carrier in enumerate(unique_carriers)}
                     
-                    for _, row in final_map_df.iterrows():
+                    # 대량 데이터면 샘플링해서 지도 렌더링 병목 완화
+                    plot_df = final_map_df if len(final_map_df) <= 6000 else final_map_df.sample(6000, random_state=42)
+                    for _, row in plot_df.iterrows():
                         carrier = row['배송사_정제']
                         color = carrier_colors.get(carrier, 'gray')
                         folium.CircleMarker(
