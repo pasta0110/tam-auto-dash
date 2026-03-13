@@ -156,7 +156,11 @@ def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.
         return pd.DataFrame()
 
     sched_col = "배송예정일" if "배송예정일" in d.columns else None
-    reg_col = "등록일" if "등록일" in d.columns else None
+    reg_col = None
+    for c in ["등록일", "주문등록일", "완료시간"]:
+        if c in d.columns:
+            reg_col = c
+            break
     if sched_col is None:
         return pd.DataFrame()
 
@@ -817,73 +821,73 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     s = s[s["판매인"] != ""].copy()
                     if s.empty:
                         st.info("선택 월에 판매인 매핑 가능한 정상 완료 코호트가 없습니다.")
-                        return
-                    if "판매지국" in r14_m.columns:
-                        seller_to_branch = (
-                            r14_m.groupby("판매인")["판매지국"]
-                            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
-                            .to_dict()
+                    else:
+                        if "판매지국" in r14_m.columns:
+                            seller_to_branch = (
+                                r14_m.groupby("판매인")["판매지국"]
+                                .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                                .to_dict()
+                            )
+                            s["판매지국"] = s["판매인"].map(seller_to_branch).fillna("")
+                        s["R14율(%)"] = (s["R14"] / s["정상완료"] * 100).fillna(0).round(2)
+                        s["R7율(%)"] = (s["R7"] / s["정상완료"] * 100).fillna(0).round(2)
+                        s["의심점수"] = (
+                            (s["R14율(%)"] >= 15).astype(int) * 2
+                            + (s["R14"] >= 5).astype(int) * 2
+                            + (s["R7율(%)"] >= 10).astype(int) * 1
                         )
-                        s["판매지국"] = s["판매인"].map(seller_to_branch).fillna("")
-                    s["R14율(%)"] = (s["R14"] / s["정상완료"] * 100).fillna(0).round(2)
-                    s["R7율(%)"] = (s["R7"] / s["정상완료"] * 100).fillna(0).round(2)
-                    s["의심점수"] = (
-                        (s["R14율(%)"] >= 15).astype(int) * 2
-                        + (s["R14"] >= 5).astype(int) * 2
-                        + (s["R7율(%)"] >= 10).astype(int) * 1
-                    )
-                    s = s.sort_values(["의심점수", "R14율(%)", "R14", "정상완료"], ascending=False)
-                    s["판매인 (판매지국)"] = s.apply(
-                        lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
-                        axis=1,
-                    )
-                    view = s[
-                        [
-                            "판매인 (판매지국)",
-                            "정상완료",
-                            "R14",
-                            "R14율(%)",
-                            "R7",
-                            "R7율(%)",
-                            "의심점수",
-                        ]
-                    ].head(30)
-                    st.table(
-                        _styled_table(
-                            view,
-                            percent_cols=["R14율(%)", "R7율(%)"],
-                            int_cols=["정상완료", "R14", "R7", "의심점수"],
+                        s = s.sort_values(["의심점수", "R14율(%)", "R14", "정상완료"], ascending=False)
+                        s["판매인 (판매지국)"] = s.apply(
+                            lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
+                            axis=1,
                         )
-                    )
-                    st.caption(
-                        "기준: 코호트월=정상 완료의 배송예정일 월, R14=반품등록일-정상완료 배송예정일이 0~14일."
-                    )
+                        view = s[
+                            [
+                                "판매인 (판매지국)",
+                                "정상완료",
+                                "R14",
+                                "R14율(%)",
+                                "R7",
+                                "R7율(%)",
+                                "의심점수",
+                            ]
+                        ].head(30)
+                        st.table(
+                            _styled_table(
+                                view,
+                                percent_cols=["R14율(%)", "R7율(%)"],
+                                int_cols=["정상완료", "R14", "R7", "의심점수"],
+                            )
+                        )
+                        st.caption(
+                            "기준: 코호트월=정상 완료의 배송예정일 월, R14=반품등록일-정상완료 배송예정일이 0~14일."
+                        )
 
-                    # 판매인 월 추세
-                    sellers = [x for x in s["판매인"].dropna().astype(str).tolist() if x.strip()]
-                    if sellers:
-                        sel_seller = st.selectbox("추세 확인 판매인", sellers, index=0, key="r14_seller_pick")
-                        t = r14[r14["판매인"].astype(str).eq(sel_seller)].copy()
-                        if not t.empty:
-                            trend = (
-                                t.groupby("코호트월", dropna=False)
-                                .agg(정상완료=("주문번호", "size"), R14=("R14", "sum"), R7=("R7", "sum"))
-                                .reset_index()
-                                .sort_values("코호트월")
-                            )
-                            trend["R14율(%)"] = (trend["R14"] / trend["정상완료"] * 100).fillna(0).round(2)
-                            trend["R7율(%)"] = (trend["R7"] / trend["정상완료"] * 100).fillna(0).round(2)
-                            st.table(
-                                _styled_table(
-                                    trend.tail(12),
-                                    percent_cols=["R14율(%)", "R7율(%)"],
-                                    int_cols=["정상완료", "R14", "R7"],
+                        # 판매인 월 추세
+                        sellers = [x for x in s["판매인"].dropna().astype(str).tolist() if x.strip()]
+                        if sellers:
+                            sel_seller = st.selectbox("추세 확인 판매인", sellers, index=0, key="r14_seller_pick")
+                            t = r14[r14["판매인"].astype(str).eq(sel_seller)].copy()
+                            if not t.empty:
+                                trend = (
+                                    t.groupby("코호트월", dropna=False)
+                                    .agg(정상완료=("주문번호", "size"), R14=("R14", "sum"), R7=("R7", "sum"))
+                                    .reset_index()
+                                    .sort_values("코호트월")
                                 )
-                            )
-                            st.line_chart(
-                                trend.set_index("코호트월")[["R14율(%)", "R7율(%)"]],
-                                use_container_width=True,
-                            )
+                                trend["R14율(%)"] = (trend["R14"] / trend["정상완료"] * 100).fillna(0).round(2)
+                                trend["R7율(%)"] = (trend["R7"] / trend["정상완료"] * 100).fillna(0).round(2)
+                                st.table(
+                                    _styled_table(
+                                        trend.tail(12),
+                                        percent_cols=["R14율(%)", "R7율(%)"],
+                                        int_cols=["정상완료", "R14", "R7"],
+                                    )
+                                )
+                                st.line_chart(
+                                    trend.set_index("코호트월")[["R14율(%)", "R7율(%)"]],
+                                    use_container_width=True,
+                                )
 
     # 6) 주문번호 결합 확인 (디버그)
     with st.expander("6) 주문번호 결합 확인 (샘플)", expanded=False):
