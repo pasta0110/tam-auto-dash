@@ -17,6 +17,12 @@ try:
 except Exception:
     DBSCAN = None
 
+try:
+    import matplotlib  # noqa: F401
+    HAS_MATPLOTLIB = True
+except Exception:
+    HAS_MATPLOTLIB = False
+
 
 def _mask_name(v: str) -> str:
     s = str(v or "").strip()
@@ -357,7 +363,10 @@ def render(ana_df):
                 else:
                     item_counts = final_map_df['상품명'].value_counts().reset_index()
                     item_counts.columns = ['상품명', '수량']
-                    st.dataframe(item_counts.style.background_gradient(cmap="Reds"), height=400, hide_index=True)
+                    if HAS_MATPLOTLIB:
+                        st.dataframe(item_counts.style.background_gradient(cmap="Reds"), height=400, hide_index=True)
+                    else:
+                        st.dataframe(item_counts, height=400, hide_index=True)
             
             # [기능 추가] 지연 상세 리스트 (지도 아래 배치)
             if analysis_mode == "🚚 배송 소요시간 분석":
