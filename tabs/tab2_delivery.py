@@ -199,6 +199,7 @@ def render(ana_df):
     max_total = df_combined['전체건수'].max() if not df_combined.empty else 100
     max_region = df_combined['지역건수'].max() if not df_combined.empty else 100
     right_axis_max = max(10, max_region * 1.3)
+    right_axis_min = -200
 
     fig_dual.update_layout(
         title=dict(text=f"<b>📊 {sel_v} 지역 vs 전체 출고 추이 비교</b>", font=dict(size=20)),
@@ -211,6 +212,11 @@ def render(ana_df):
 
     fig_dual.update_xaxes(tickformat="%y년 %m월", dtick="M1", title_text="출고 연월")
     fig_dual.update_yaxes(title_text="전체 물량 (막대)", secondary_y=False, showgrid=False, range=[0, max_total * 1.3])
-    fig_dual.update_yaxes(title_text=f"{sel_v} 물량 (선)", secondary_y=True, showgrid=True, range=[0, right_axis_max])
+    fig_dual.update_yaxes(
+        title_text=f"{sel_v} 물량 (선)",
+        secondary_y=True,
+        showgrid=True,
+        range=[right_axis_min, right_axis_max],
+    )
 
     st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")
