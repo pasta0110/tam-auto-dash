@@ -8,6 +8,12 @@ import streamlit as st
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, errors="coerce")
 
+
+def _is_cheongho(df: pd.DataFrame) -> pd.Series:
+    if "매출처" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return df["매출처"].astype(str).eq("청호나이스")
+
 def _center_style(df: pd.DataFrame):
     return (
         df.style.set_properties(**{"text-align": "center"})
@@ -38,6 +44,171 @@ def _month_key_from_date_col(df: pd.DataFrame, col: str) -> pd.Series:
         return pd.Series([None] * len(df), index=df.index, dtype="object")
     dt = _safe_to_datetime(df[col])
     return dt.dt.strftime("%Y-%m")
+
+
+def _seller_branch_map_from_order(order_df: pd.DataFrame) -> pd.DataFrame:
+    if order_df is None or order_df.empty or "주문번호" not in order_df.columns:
+        return pd.DataFrame(columns=["주문번호", "판매인", "판매지국"])
+    o = order_df.copy()
+    o = o[_is_cheongho(o)].copy()
+    cols = [c for c in ["주문번호", "판매인", "판매지국"] if c in o.columns]
+    if "주문번호" not in cols:
+        return pd.DataFrame(columns=["주문번호", "판매인", "판매지국"])
+    for c in ["판매인", "판매지국"]:
+        if c not in cols:
+            o[c] = ""
+            cols.append(c)
+    return (
+        o[cols]
+        .dropna(subset=["주문번호"])
+        .groupby("주문번호", dropna=False)[["판매인", "판매지국"]]
+        .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+        .reset_index()
+    )
+
+
+def _build_event_seller_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame, month_key: str) -> pd.DataFrame:
+    """
+    이벤트 기준(원천 이벤트 관점) 판매인 요약.
+    - 모수: 해당 월(배송예정일 기준)에 이벤트가 1건 이상 존재한 고유 주문번호 수
+    - 상태별 수치: 같은 주문번호가 여러 상태를 가질 수 있으므로 합은 모수를 초과할 수 있음
+    """
+    if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
+        return pd.DataFrame()
+
+    d = delivery_df.copy()
+    d = d[_is_cheongho(d)].copy()
+    if "배송예정일" not in d.columns:
+        return pd.DataFrame()
+
+    d["연월_키"] = _month_key(_safe_to_datetime(d["배송예정일"]))
+    d = d[d["연월_키"].eq(month_key)].copy()
+    if d.empty:
+        return pd.DataFrame()
+
+    map_df = _seller_branch_map_from_order(order_df)
+    d = d.merge(map_df, on="주문번호", how="left")
+    seller_col = "판매인"
+    branch_col = "판매지국"
+
+    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
+    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
+    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
+    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
+
+    is_complete = order_stat.str.contains("완료", na=False) | ship_stat.str.contains("완료|4", na=False)
+    is_normal_complete = order_type.eq("정상") & is_complete
+    is_cancel = ship_stat.eq("미설치") | order_stat.eq("주문취소")
+    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
+    is_as = ship_type.eq("AS")
+    is_exchange = ship_type.eq("교환")
+
+    key_cols = ["주문번호", seller_col] + ([branch_col] if branch_col else [])
+    dm = d[key_cols].copy()
+    dm["정상완료_evt"] = is_normal_complete.astype(int)
+    dm["취소_evt"] = is_cancel.astype(int)
+    dm["반품_evt"] = is_return.astype(int)
+    dm["AS_evt"] = is_as.astype(int)
+    dm["교환_evt"] = is_exchange.astype(int)
+
+    by_order = (
+        dm.groupby(key_cols, dropna=False)[["정상완료_evt", "취소_evt", "반품_evt", "AS_evt", "교환_evt"]]
+        .max()
+        .reset_index()
+    )
+    out = (
+        by_order.groupby(seller_col, dropna=False)
+        .agg(
+            이벤트_전체=("주문번호", "size"),
+            정상완료=("정상완료_evt", "sum"),
+            취소=("취소_evt", "sum"),
+            반품=("반품_evt", "sum"),
+            AS=("AS_evt", "sum"),
+            교환=("교환_evt", "sum"),
+        )
+        .reset_index()
+    )
+    out = out.rename(columns={seller_col: "판매인"})
+    if branch_col:
+        seller_to_branch = (
+            by_order.groupby(seller_col)[branch_col]
+            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+            .to_dict()
+        )
+        out["판매지국"] = out["판매인"].map(seller_to_branch).fillna("")
+    out["이벤트_취소율(%)"] = (out["취소"] / out["이벤트_전체"] * 100).fillna(0).round(2)
+    out["이벤트_반품율(%)"] = (out["반품"] / out["이벤트_전체"] * 100).fillna(0).round(2)
+    return out.sort_values(["반품", "취소", "이벤트_전체"], ascending=False)
+
+
+def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    R14(배송예정일 기준 14일 내 반품/회수) 코호트 계산.
+    - 코호트 월: 정상 완료 주문의 배송예정일 연월
+    - R14 조건: 0 <= (첫 반품 등록일 - 정상 완료 배송예정일) <= 14
+    """
+    if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
+        return pd.DataFrame()
+
+    d = delivery_df.copy()
+    d = d[_is_cheongho(d)].copy()
+    if d.empty:
+        return pd.DataFrame()
+
+    sched_col = "배송예정일" if "배송예정일" in d.columns else None
+    reg_col = "등록일" if "등록일" in d.columns else None
+    if sched_col is None:
+        return pd.DataFrame()
+
+    d["배송예정일_DT"] = _safe_to_datetime(d[sched_col])
+    d["등록일_DT"] = _safe_to_datetime(d[reg_col]) if reg_col else pd.NaT
+
+    map_df = _seller_branch_map_from_order(order_df)
+    d = d.merge(map_df, on="주문번호", how="left")
+    if "주문번호" not in d.columns:
+        return pd.DataFrame()
+
+    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
+    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
+    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
+    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
+
+    is_complete = order_stat.str.contains("완료", na=False) | ship_stat.str.contains("완료|4", na=False)
+    normal_complete = order_type.eq("정상") & is_complete & d["배송예정일_DT"].notna()
+    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
+
+    comp = d[normal_complete].copy()
+    if comp.empty:
+        return pd.DataFrame()
+    comp = comp.sort_values("배송예정일_DT")
+    comp_first = (
+        comp.groupby("주문번호", dropna=False)
+        .agg(
+            정상완료일=("배송예정일_DT", "min"),
+            판매인=("판매인", lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else ""),
+            판매지국=("판매지국", lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else ""),
+        )
+        .reset_index()
+    )
+    comp_first["코호트월"] = comp_first["정상완료일"].dt.strftime("%Y-%m")
+
+    ret = d[is_return & d["등록일_DT"].notna()].copy()
+    if ret.empty:
+        out = comp_first.copy()
+        out["반품등록일"] = pd.NaT
+        out["반품소요일"] = pd.NA
+        out["R14"] = 0
+        out["R7"] = 0
+        return out
+
+    ret = ret.sort_values("등록일_DT")
+    ret_first = ret.groupby("주문번호", dropna=False)["등록일_DT"].min().reset_index(name="반품등록일")
+
+    out = comp_first.merge(ret_first, on="주문번호", how="left")
+    out["반품소요일"] = (out["반품등록일"] - out["정상완료일"]).dt.days
+    out["R14"] = ((out["반품소요일"] >= 0) & (out["반품소요일"] <= 14)).astype(int)
+    out["R7"] = ((out["반품소요일"] >= 0) & (out["반품소요일"] <= 7)).astype(int)
+    return out
 
 
 def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
@@ -490,7 +661,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
         return out[out["버킷"].isin(["정상", "AS", "교환", "반품", "취소"])].copy()
 
     # 3) 취소 TOP 판매지국/판매인
-    with st.expander("3) 취소 TOP 판매지국/판매인 (조회 월 기준)", expanded=True):
+    with st.expander("3) 취소 TOP 판매지국/판매인 (최종기준 vs 이벤트기준)", expanded=True):
         base = _valid_bucket_df(om_m)
         if base.empty:
             st.info("해당 월에 집계할 데이터가 없습니다.")
@@ -537,6 +708,37 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     else:
                         view = view[["판매인", "전체", "정상", "취소", "취소율(%)"]]
                     st.table(_styled_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"]))
+
+            st.markdown("**이벤트 기준(원데이터 관점) 판매인 TOP**")
+            event_rank = _build_event_seller_summary(order_df, delivery_df, sel_month)
+            if event_rank.empty:
+                st.info("이벤트 기준 집계에 필요한 데이터가 없습니다.")
+            else:
+                ev = event_rank.copy()
+                ev["판매인 (판매지국)"] = ev.apply(
+                    lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
+                    axis=1,
+                )
+                ev = ev[
+                    [
+                        "판매인 (판매지국)",
+                        "이벤트_전체",
+                        "정상완료",
+                        "취소",
+                        "반품",
+                        "AS",
+                        "교환",
+                        "이벤트_취소율(%)",
+                        "이벤트_반품율(%)",
+                    ]
+                ].head(20)
+                st.table(
+                    _styled_table(
+                        ev,
+                        percent_cols=["이벤트_취소율(%)", "이벤트_반품율(%)"],
+                        int_cols=["이벤트_전체", "정상완료", "취소", "반품", "AS", "교환"],
+                    )
+                )
 
     # 4) 반품 TOP 판매지국/판매인
     with st.expander("4) 반품 TOP 판매지국/판매인 (조회 월 기준)", expanded=True):
@@ -587,8 +789,104 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         view = view[["판매인", "전체", "정상", "반품", "반품율(%)"]]
                     st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
 
-    # 5) 주문번호 결합 확인 (디버그)
-    with st.expander("5) 주문번호 결합 확인 (샘플)", expanded=False):
+    # 5) R14 악성 패턴 탐지
+    with st.expander("5) R14(14일내 반품) 악성 패턴 탐지", expanded=True):
+        r14 = _build_r14_summary(order_df, delivery_df)
+        if r14.empty:
+            st.info("R14 계산에 필요한 완료/반품 데이터가 없습니다.")
+        else:
+            r14_m = r14[r14["코호트월"].astype(str).eq(sel_month)].copy()
+            if r14_m.empty:
+                st.info("선택 월에 정상 완료 코호트가 없습니다.")
+            else:
+                seller_col = "판매인" if "판매인" in r14_m.columns else None
+                if seller_col is None:
+                    st.info("판매인 정보가 없어 R14 판매인 분석을 표시할 수 없습니다.")
+                else:
+                    s = (
+                        r14_m.groupby(seller_col, dropna=False)
+                        .agg(
+                            정상완료=("주문번호", "size"),
+                            R14=("R14", "sum"),
+                            R7=("R7", "sum"),
+                        )
+                        .reset_index()
+                        .rename(columns={seller_col: "판매인"})
+                    )
+                    s["판매인"] = s["판매인"].astype(str).fillna("").str.strip()
+                    s = s[s["판매인"] != ""].copy()
+                    if s.empty:
+                        st.info("선택 월에 판매인 매핑 가능한 정상 완료 코호트가 없습니다.")
+                        return
+                    if "판매지국" in r14_m.columns:
+                        seller_to_branch = (
+                            r14_m.groupby("판매인")["판매지국"]
+                            .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
+                            .to_dict()
+                        )
+                        s["판매지국"] = s["판매인"].map(seller_to_branch).fillna("")
+                    s["R14율(%)"] = (s["R14"] / s["정상완료"] * 100).fillna(0).round(2)
+                    s["R7율(%)"] = (s["R7"] / s["정상완료"] * 100).fillna(0).round(2)
+                    s["의심점수"] = (
+                        (s["R14율(%)"] >= 15).astype(int) * 2
+                        + (s["R14"] >= 5).astype(int) * 2
+                        + (s["R7율(%)"] >= 10).astype(int) * 1
+                    )
+                    s = s.sort_values(["의심점수", "R14율(%)", "R14", "정상완료"], ascending=False)
+                    s["판매인 (판매지국)"] = s.apply(
+                        lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
+                        axis=1,
+                    )
+                    view = s[
+                        [
+                            "판매인 (판매지국)",
+                            "정상완료",
+                            "R14",
+                            "R14율(%)",
+                            "R7",
+                            "R7율(%)",
+                            "의심점수",
+                        ]
+                    ].head(30)
+                    st.table(
+                        _styled_table(
+                            view,
+                            percent_cols=["R14율(%)", "R7율(%)"],
+                            int_cols=["정상완료", "R14", "R7", "의심점수"],
+                        )
+                    )
+                    st.caption(
+                        "기준: 코호트월=정상 완료의 배송예정일 월, R14=반품등록일-정상완료 배송예정일이 0~14일."
+                    )
+
+                    # 판매인 월 추세
+                    sellers = [x for x in s["판매인"].dropna().astype(str).tolist() if x.strip()]
+                    if sellers:
+                        sel_seller = st.selectbox("추세 확인 판매인", sellers, index=0, key="r14_seller_pick")
+                        t = r14[r14["판매인"].astype(str).eq(sel_seller)].copy()
+                        if not t.empty:
+                            trend = (
+                                t.groupby("코호트월", dropna=False)
+                                .agg(정상완료=("주문번호", "size"), R14=("R14", "sum"), R7=("R7", "sum"))
+                                .reset_index()
+                                .sort_values("코호트월")
+                            )
+                            trend["R14율(%)"] = (trend["R14"] / trend["정상완료"] * 100).fillna(0).round(2)
+                            trend["R7율(%)"] = (trend["R7"] / trend["정상완료"] * 100).fillna(0).round(2)
+                            st.table(
+                                _styled_table(
+                                    trend.tail(12),
+                                    percent_cols=["R14율(%)", "R7율(%)"],
+                                    int_cols=["정상완료", "R14", "R7"],
+                                )
+                            )
+                            st.line_chart(
+                                trend.set_index("코호트월")[["R14율(%)", "R7율(%)"]],
+                                use_container_width=True,
+                            )
+
+    # 6) 주문번호 결합 확인 (디버그)
+    with st.expander("6) 주문번호 결합 확인 (샘플)", expanded=False):
         if om_all is None or om_all.empty:
             st.info("결합된 데이터가 없습니다.")
         else:
