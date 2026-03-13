@@ -2,6 +2,7 @@
 # 데이터 가공 및 정제 로직
 
 import pandas as pd
+import streamlit as st
 from utils.text_utils import clean_v, get_qty, get_main_cat, check_panel
 
 def _mode_or_first(series: pd.Series):
@@ -92,6 +93,7 @@ def build_order_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd
     base["최종상태"] = base.apply(_final, axis=1)
     return base
 
+@st.cache_data(ttl=300, show_spinner=False)
 def process_data(order_df, delivery_df):
     """
     로드된 데이터프레임을 전처리하여 분석용 데이터 생성
@@ -99,6 +101,10 @@ def process_data(order_df, delivery_df):
         order_df (가공됨), delivery_df (가공됨), ana_df (분석용 필터링됨)
     """
     
+    # 캐시 안정성을 위해 입력 원본을 복사해서 가공
+    order_df = order_df.copy() if order_df is not None else None
+    delivery_df = delivery_df.copy() if delivery_df is not None else None
+
     # 1. 공통 전처리 (주문, 배송 데이터)
     for df in [order_df, delivery_df]:
         if df is None: continue

@@ -67,6 +67,7 @@ def _seller_branch_map_from_order(order_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _build_event_seller_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame, month_key: str) -> pd.DataFrame:
     """
     이벤트 기준(원천 이벤트 관점) 판매인 요약.
@@ -141,6 +142,7 @@ def _build_event_seller_summary(order_df: pd.DataFrame, delivery_df: pd.DataFram
     return out.sort_values(["반품", "취소", "이벤트_전체"], ascending=False)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
     """
     R14(배송예정일 기준 14일 내 반품/회수) 코호트 계산.
@@ -215,6 +217,7 @@ def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.
     return out
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.DataFrame:
     """
     주문번호(주문 단위)로 월별(배송예정일 기준) 상태를 1건으로 요약합니다.
