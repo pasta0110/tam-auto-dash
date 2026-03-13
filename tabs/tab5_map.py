@@ -45,6 +45,40 @@ def _mask_addr(v: str) -> str:
     return " ".join(tokens[:2]) + " ..."
 
 
+def _clean_address(addr: str) -> str:
+    if not isinstance(addr, str):
+        return ""
+    addr = re.sub(r"\([^)]*\)", "", addr)
+    addr = re.sub(r"[^\w\s]", " ", addr)
+    tokens = addr.split()
+    if len(tokens) >= 2:
+        return " ".join(tokens[:5])
+    return " ".join(tokens)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _prepare_map_base_cached(src_df: pd.DataFrame, csv_path: str, csv_mtime: float):
+    df_map_base = src_df.copy()
+    df_map_base["search_addr"] = df_map_base["주소"].apply(_clean_address)
+    target_addrs = [addr for addr in df_map_base["search_addr"].unique() if str(addr).strip()]
+
+    if os.path.exists(csv_path):
+        try:
+            saved_coords = pd.read_csv(csv_path)
+        except Exception:
+            saved_coords = pd.DataFrame(columns=["search_addr", "lat", "lon"])
+    else:
+        saved_coords = pd.DataFrame(columns=["search_addr", "lat", "lon"])
+
+    if not saved_coords.empty:
+        saved_coords["lat"] = pd.to_numeric(saved_coords["lat"], errors="coerce")
+        saved_coords["lon"] = pd.to_numeric(saved_coords["lon"], errors="coerce")
+        saved_coords = saved_coords.dropna(subset=["lat", "lon"]).copy()
+
+    final_map_df = pd.merge(df_map_base, saved_coords, on="search_addr", how="inner")
+    return df_map_base, target_addrs, saved_coords, final_map_df
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _build_delay_df_cached(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -107,37 +141,11 @@ def render(ana_df):
         
         df_map_base = ana_df[cols_to_use].copy()
         
-        # [정확도] 2. 주소 정제 로직 개선
-        def clean_address(addr):
-            if not isinstance(addr, str): return ""
-            addr = re.sub(r'\([^)]*\)', '', addr)
-            addr = re.sub(r'[^\w\s]', ' ', addr)
-            tokens = addr.split()
-            if len(tokens) >= 2:
-                return ' '.join(tokens[:5]) 
-            return ' '.join(tokens)
-
-        df_map_base['search_addr'] = df_map_base['주소'].apply(clean_address)
-        
-        # 지오코딩 대상 추출
-        target_addrs = [addr for addr in df_map_base['search_addr'].unique() if addr.strip()]
-        
         # [저장] 4. CSV 경로 설정
         CSV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "coords.csv")
         
-        # [캐싱] 9. 데이터 캐싱 전략 개선
-        @st.cache_data(ttl=300)
-        def load_existing_coords(_file_mtime: float):
-            if os.path.exists(CSV_PATH):
-                try:
-                    return pd.read_csv(CSV_PATH)
-                except Exception:
-                    return pd.DataFrame(columns=['search_addr', 'lat', 'lon'])
-            else:
-                return pd.DataFrame(columns=['search_addr', 'lat', 'lon'])
-
         csv_mtime = os.path.getmtime(CSV_PATH) if os.path.exists(CSV_PATH) else 0.0
-        saved_coords = load_existing_coords(csv_mtime)
+        df_map_base, target_addrs, saved_coords, final_map_df = _prepare_map_base_cached(df_map_base, CSV_PATH, csv_mtime)
         
         # 저장된 좌표에 없는 주소만 추출
         if not saved_coords.empty:
@@ -198,7 +206,8 @@ def render(ana_df):
             combined_coords = saved_coords
 
         # [성능] 7. 지도 렌더링 최적화
-        final_map_df = pd.merge(df_map_base, combined_coords, on='search_addr', how='inner')
+        if new_coords_list:
+            final_map_df = pd.merge(df_map_base, combined_coords, on='search_addr', how='inner')
 
         if not final_map_df.empty:
             
@@ -223,6 +232,10 @@ def render(ana_df):
 
             # 레이아웃 분할
             col_map, col_stat = st.columns([3, 1])
+            max_points = st.slider("🗺️ 지도 표시 최대 포인트", 1000, 10000, 3500, 500, key="tab5_max_points")
+            map_df = final_map_df if len(final_map_df) <= max_points else final_map_df.sample(max_points, random_state=42)
+            if len(final_map_df) > max_points:
+                st.caption(f"성능 최적화를 위해 지도 표시는 {len(final_map_df):,}건 중 {max_points:,}건만 샘플링합니다.")
             
             # ─────────────────────────────────────────────────────────────
             # [기능 개선] 배송 소요시간 분석 전용 로직 (필터링 및 상세 팝업)
@@ -254,8 +267,8 @@ def render(ana_df):
                     delay_df_final = delay_df[delay_df['상태'].isin(target_colors)]
 
             with col_map:
-                center_lat = final_map_df['lat'].mean()
-                center_lon = final_map_df['lon'].mean()
+                center_lat = map_df['lat'].mean()
+                center_lon = map_df['lon'].mean()
 
                 m = folium.Map(
                     location=[center_lat, center_lon], 
@@ -265,13 +278,13 @@ def render(ana_df):
                 )
                 
                 if analysis_mode == "🔥 주문 밀집도 (기본)":
-                    heat_data = final_map_df[['lat', 'lon']].values.tolist()
+                    heat_data = map_df[['lat', 'lon']].values.tolist()
                     HeatMap(heat_data, radius=15, blur=10, min_opacity=0.3).add_to(m)
                     
-                    coords = final_map_df[['lat', 'lon']].values
+                    coords = map_df[['lat', 'lon']].values
                     if len(coords) > 0 and DBSCAN is not None:
                         # 대량 포인트에서는 샘플링해서 군집 계산 시간을 줄임
-                        cluster_src = final_map_df if len(final_map_df) <= 6000 else final_map_df.sample(6000, random_state=42)
+                        cluster_src = map_df if len(map_df) <= 6000 else map_df.sample(6000, random_state=42)
                         c_coords = cluster_src[['lat', 'lon']].values
                         dbscan = DBSCAN(eps=0.05, min_samples=10).fit(c_coords)
                         cluster_src = cluster_src.copy()
@@ -300,6 +313,9 @@ def render(ana_df):
                         
                     # 2. 지연 (Red) -> MarkerCluster (상세 정보 팝업)
                     red_df = delay_df_final[delay_df_final['상태'] == 'red']
+                    if len(red_df) > 1200:
+                        red_df = red_df.sort_values("영업배송일수", ascending=False).head(1200)
+                        st.caption("성능 최적화를 위해 지연 마커는 상위 1,200건만 표시합니다.")
                     marker_cluster = MarkerCluster().add_to(m)
                     
                     for _, row in red_df.iterrows():
@@ -328,12 +344,12 @@ def render(ana_df):
                         ).add_to(marker_cluster)
 
                 elif analysis_mode == "🏢 배송사별 분포":
-                    unique_carriers = final_map_df['배송사_정제'].unique()
+                    unique_carriers = map_df['배송사_정제'].unique()
                     colors = ['blue', 'green', 'red', 'purple', 'orange', 'darkblue', 'darkgreen', 'cadetblue']
                     carrier_colors = {carrier: colors[i % len(colors)] for i, carrier in enumerate(unique_carriers)}
                     
                     # 대량 데이터면 샘플링해서 지도 렌더링 병목 완화
-                    plot_df = final_map_df if len(final_map_df) <= 6000 else final_map_df.sample(6000, random_state=42)
+                    plot_df = map_df if len(map_df) <= 6000 else map_df.sample(6000, random_state=42)
                     for _, row in plot_df.iterrows():
                         carrier = row['배송사_정제']
                         color = carrier_colors.get(carrier, 'gray')
@@ -349,7 +365,7 @@ def render(ana_df):
                     m.get_root().html.add_child(folium.Element(legend_html))
 
                 elif analysis_mode == "📦 상품별 수요 분석":
-                    marker_cluster = FastMarkerCluster(data=final_map_df[['lat', 'lon']].values.tolist())
+                    marker_cluster = FastMarkerCluster(data=map_df[['lat', 'lon']].values.tolist())
                     marker_cluster.add_to(m)
                 
                 folium_static(m, width=900, height=600)
