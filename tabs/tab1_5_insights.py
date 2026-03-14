@@ -36,6 +36,19 @@ def _styled_table(df: pd.DataFrame, percent_cols=(), int_cols=()):
     return sty
 
 
+def _show_table(df: pd.DataFrame, percent_cols=(), int_cols=()):
+    view = df.copy().reset_index(drop=True)
+    for c in percent_cols:
+        if c in view.columns:
+            s = pd.to_numeric(view[c], errors="coerce")
+            view[c] = s.map(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+    for c in int_cols:
+        if c in view.columns:
+            s = pd.to_numeric(view[c], errors="coerce")
+            view[c] = s.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+    st.dataframe(view, hide_index=True, use_container_width=True)
+
+
 def _month_key(d: pd.Series) -> pd.Series:
     return d.dt.strftime("%Y-%m")
 
@@ -449,12 +462,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             "취소율": "취소율(%)",
         }
     )
-    st.table(
-        _styled_table(
-            show,
-            percent_cols=["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"],
-            int_cols=["전체", "정상", "AS", "교환", "반품", "취소"],
-        )
+    _show_table(
+        show,
+        percent_cols=["AS율(%)", "교환율(%)", "반품율(%)", "취소율(%)"],
+        int_cols=["전체", "정상", "AS", "교환", "반품", "취소"],
     )
 
     if unclassified_total:
@@ -558,7 +569,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 st.info("해당 월에 리스크 이벤트가 없습니다.")
             else:
                 view = out[["주문번호 (고객명)", "리스크점수", "AS", "교환", "반품", "취소"]].copy()
-                st.table(_styled_table(view, int_cols=["리스크점수", "AS", "교환", "반품", "취소"]))
+                _show_table(view, int_cols=["리스크점수", "AS", "교환", "반품", "취소"])
 
     # 2) AS/교환 급증 상품코드
     with st.expander("2) AS/교환 급증 상품코드 (전월 대비)", expanded=True):
@@ -641,19 +652,17 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                             "교환_전월": "교환(전월)",
                         }
                     )
-                    st.table(
-                        _styled_table(
-                            view,
-                            int_cols=[
-                                "증가",
-                                "총이슈(이번달)",
-                                "총이슈(전월)",
-                                "AS(이번달)",
-                                "교환(이번달)",
-                                "AS(전월)",
-                                "교환(전월)",
-                            ],
-                        )
+                    _show_table(
+                        view,
+                        int_cols=[
+                            "증가",
+                            "총이슈(이번달)",
+                            "총이슈(전월)",
+                            "AS(이번달)",
+                            "교환(이번달)",
+                            "AS(전월)",
+                            "교환(전월)",
+                        ],
                     )
 
     # 공통: 주문번호(주문 단위) 월 요약
@@ -692,7 +701,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 if g.empty:
                     st.info("판매지국 컬럼이 없습니다.")
                 else:
-                    st.table(_styled_table(g.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"]))
+                    _show_table(g.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"])
             with c2:
                 st.markdown("**판매인 TOP**")
                 g = _cancel_rank("판매인")
@@ -715,7 +724,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         view = view[["판매인 (판매지국)", "전체", "정상", "취소", "취소율(%)"]]
                     else:
                         view = view[["판매인", "전체", "정상", "취소", "취소율(%)"]]
-                    st.table(_styled_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"]))
+                    _show_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"])
 
             st.markdown("**이벤트 기준(원데이터 관점) 판매인 TOP**")
             event_rank = _build_event_seller_summary(order_df, delivery_df, sel_month)
@@ -740,12 +749,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         "이벤트_반품율(%)",
                     ]
                 ].head(20)
-                st.table(
-                    _styled_table(
-                        ev,
-                        percent_cols=["이벤트_취소율(%)", "이벤트_반품율(%)"],
-                        int_cols=["이벤트_전체", "정상완료", "취소", "반품", "AS", "교환"],
-                    )
+                _show_table(
+                    ev,
+                    percent_cols=["이벤트_취소율(%)", "이벤트_반품율(%)"],
+                    int_cols=["이벤트_전체", "정상완료", "취소", "반품", "AS", "교환"],
                 )
 
     # 4) 반품 TOP 판매지국/판매인
@@ -772,7 +779,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 if g.empty:
                     st.info("판매지국 컬럼이 없습니다.")
                 else:
-                    st.table(_styled_table(g.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
+                    _show_table(g.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"])
             with c2:
                 st.markdown("**판매인 TOP**")
                 g = _return_rank("판매인")
@@ -795,7 +802,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                         view = view[["판매인 (판매지국)", "전체", "정상", "반품", "반품율(%)"]]
                     else:
                         view = view[["판매인", "전체", "정상", "반품", "반품율(%)"]]
-                    st.table(_styled_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"]))
+                    _show_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"])
 
     # 5) R14 악성 패턴 탐지
     with st.expander("5) R14(14일내 반품) 악성 패턴 탐지", expanded=True):
@@ -856,12 +863,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                                 "의심점수",
                             ]
                         ].head(30)
-                        st.table(
-                            _styled_table(
-                                view,
-                                percent_cols=["R14율(%)", "R7율(%)"],
-                                int_cols=["정상완료", "R14", "R7", "의심점수"],
-                            )
+                        _show_table(
+                            view,
+                            percent_cols=["R14율(%)", "R7율(%)"],
+                            int_cols=["정상완료", "R14", "R7", "의심점수"],
                         )
                         st.caption(
                             "기준: 코호트월=정상 완료의 배송예정일 월, R14=반품등록일-정상완료 배송예정일이 0~14일."
@@ -881,12 +886,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                                 )
                                 trend["R14율(%)"] = (trend["R14"] / trend["정상완료"] * 100).fillna(0).round(2)
                                 trend["R7율(%)"] = (trend["R7"] / trend["정상완료"] * 100).fillna(0).round(2)
-                                st.table(
-                                    _styled_table(
-                                        trend.tail(12),
-                                        percent_cols=["R14율(%)", "R7율(%)"],
-                                        int_cols=["정상완료", "R14", "R7"],
-                                    )
+                                _show_table(
+                                    trend.tail(12),
+                                    percent_cols=["R14율(%)", "R7율(%)"],
+                                    int_cols=["정상완료", "R14", "R7"],
                                 )
                                 st.line_chart(
                                     trend.set_index("코호트월")[["R14율(%)", "R7율(%)"]],
@@ -910,7 +913,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 st.info("표시할 컬럼이 없습니다.")
             else:
                 view = dbg[cols].copy()
-                st.table(_styled_table(view, int_cols=["정상(상세)", "취소발생", "AS발생", "교환발생", "반품발생"]))
+                _show_table(view, int_cols=["정상(상세)", "취소발생", "AS발생", "교환발생", "반품발생"])
 
             # 주문 데이터 범위 안내 (판매인/지국이 NaN인 이유 확인용)
             if order_df is not None and not order_df.empty:
