@@ -1,6 +1,10 @@
 {
-  "extracted_at_kst": "2026-03-14 09:00:02 KST",
-  "order_rows": 24017,
+  "extracted_at_kst": "2026-03-14 09:12:44 KST",
+  "order_rows": 37984,
   "delivery_rows": 49198,
-  "commit_at_kst": "2026-03-14 09:00:47 KST"
+  "order_target_max_rows": 40000,
+  "order_selected_months": 10,
+  "order_window_from": "2025-06-01",
+  "order_window_to": "2025-06-30",
+  "commit_at_kst": "2026-03-14 09:13:33 KST"
 }
