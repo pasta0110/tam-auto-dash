@@ -3,6 +3,8 @@
 
 import streamlit as st
 import pandas as pd
+import hashlib
+import os
 import config
 from utils.date_utils import get_current_context
 import data_loader
@@ -63,6 +65,19 @@ def _order_month_coverage(order_df, max_rows=40000):
         "max_rows": int(max_rows),
     }
 
+
+def _file_sha256(path: str):
+    try:
+        if not path or not os.path.exists(path):
+            return None
+        h = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
 # 1. 페이지 기본 설정 (가장 먼저 실행되어야 함)
 st.set_page_config(
     page_title=config.APP_TITLE,
@@ -93,6 +108,16 @@ if run_meta:
         parts.append(f"GitHub 업로드(커밋): {committed}")
     if run_meta.get("order_rows") is not None and run_meta.get("delivery_rows") is not None:
         parts.append(f"rows: order={run_meta.get('order_rows')}, delivery={run_meta.get('delivery_rows')}")
+    meta_o = run_meta.get("order_sha256")
+    meta_d = run_meta.get("delivery_sha256")
+    if meta_o and meta_d:
+        cur_o = _file_sha256(config.ORDER_CSV_PATH)
+        cur_d = _file_sha256(config.DELIVERY_CSV_PATH)
+        if cur_o and cur_d:
+            if cur_o == meta_o and cur_d == meta_d:
+                parts.append("무결성: ✅ meta-hash 일치")
+            else:
+                parts.append("무결성: ❌ meta-hash 불일치")
 
 # fallback 1: GitHub 마지막 커밋 시각 (Streamlit Cloud에서 'local mtime'은 배포 시각이라 의미 없음)
 if not parts:

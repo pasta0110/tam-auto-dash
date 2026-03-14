@@ -449,7 +449,6 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
 
     # 표 출력(전체)
     show = kpi_df.copy()
-    show = show.set_index("월")
     # 미분류는 검증용(표에는 숨기고 경고로만 사용)
     unclassified_total = int(show["미분류"].sum()) if "미분류" in show.columns else 0
     if "미분류" in show.columns:

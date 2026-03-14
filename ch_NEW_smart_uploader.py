@@ -6,6 +6,7 @@ import shutil
 import traceback
 import requests
 import pandas as pd
+import hashlib
 from io import BytesIO
 import calendar
 from datetime import datetime
@@ -91,6 +92,14 @@ def _download_excel_df(dl_url: str, params: dict) -> pd.DataFrame:
     resp = session.post(dl_url, data=params)
     resp.raise_for_status()
     return pd.read_excel(BytesIO(resp.content))
+
+
+def _file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 # ==========================================
 # 2. ERP CSV 다운로드
@@ -372,9 +381,14 @@ def download_erp_csv():
     order_df.to_csv(order_path, index=False, encoding="utf-8-sig")
     print("✅ order.csv 생성 완료")
 
+    order_sha256 = _file_sha256(order_path)
+    delivery_sha256 = _file_sha256(delivery_path)
+
     return {
         "order_rows": int(order_df.shape[0]),
         "delivery_rows": int(delivery_df.shape[0]),
+        "order_sha256": order_sha256,
+        "delivery_sha256": delivery_sha256,
         "order_target_max_rows": ORDER_TARGET_MAX_ROWS,
         "order_selected_months": len(included),
         "order_window_from": last_from,
