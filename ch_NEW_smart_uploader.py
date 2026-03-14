@@ -49,6 +49,8 @@ session = requests.Session()
 
 today = datetime.today()
 start_date = "2025-02-01"
+ORDER_TARGET_MAX_ROWS = 40000
+ORDER_MAX_LOOKBACK_MONTHS = 24
 
 def _shift_month(year: int, month: int, delta_months: int):
     m = month + delta_months
@@ -76,6 +78,19 @@ order_start, _ = _month_range_ym(order_start_y, order_start_m)
 _, order_end = _month_range_ym(order_end_y, order_end_m)
 order_start_date = order_start.strftime("%Y-%m-%d")
 order_end_date = order_end.strftime("%Y-%m-%d")
+
+
+def _iter_months_desc(start_year: int, start_month: int, n_months: int):
+    y, m = start_year, start_month
+    for _ in range(n_months):
+        yield y, m
+        y, m = _shift_month(y, m, -1)
+
+
+def _download_excel_df(dl_url: str, params: dict) -> pd.DataFrame:
+    resp = session.post(dl_url, data=params)
+    resp.raise_for_status()
+    return pd.read_excel(BytesIO(resp.content))
 
 # ==========================================
 # 2. ERP CSV 다운로드
@@ -302,16 +317,69 @@ def download_erp_csv():
     # 주문 데이터 다운로드
     # =========================
 
-    print("📦 주문 데이터 다운로드 중...")
+    print("📦 주문 데이터 다운로드 중... (월 전체 단위, 4만건 근접 자동 검증)")
 
-    resp = session.post(dl_url, data=order_p)
-    resp.raise_for_status()
-    order_df = pd.read_excel(BytesIO(resp.content))
+    month_frames = []
+    included = []
+    cum_rows = 0
+    last_from = None
+    last_to = None
+
+    for y, m in _iter_months_desc(order_end_y, order_end_m, ORDER_MAX_LOOKBACK_MONTHS):
+        m_first, m_last = _month_range_ym(y, m)
+        m_from = m_first.strftime("%Y-%m-%d")
+        m_to = m_last.strftime("%Y-%m-%d")
+
+        month_p = dict(order_p)
+        month_p["order_date_from"] = m_from
+        month_p["order_date_to"] = m_to
+
+        df_m = _download_excel_df(dl_url, month_p)
+        rows_m = int(df_m.shape[0])
+        ym = f"{y:04d}-{m:02d}"
+        print(f"  - {ym}: {rows_m:,}건")
+
+        if rows_m == 0:
+            continue
+
+        if month_frames and (cum_rows + rows_m > ORDER_TARGET_MAX_ROWS):
+            print(f"  ↳ 누적 {cum_rows:,}건에서 중단 (다음 월 추가 시 {cum_rows + rows_m:,}건)")
+            break
+
+        month_frames.append(df_m)
+        included.append(ym)
+        cum_rows += rows_m
+        last_from = m_from
+        last_to = m_to
+
+    if month_frames:
+        order_df = pd.concat(month_frames, ignore_index=True)
+        print(
+            "✅ 주문 월범위 선택 완료: "
+            f"{included[-1]}~{included[0]} (월 {len(included)}개, 누적 {cum_rows:,}/{ORDER_TARGET_MAX_ROWS:,}건)"
+        )
+    else:
+        # 월별 조회 실패/데이터 없음 시 기존 단일 기간 조회로 fallback
+        print("⚠️ 월별 조회 결과가 없어 기존 기간조회 방식으로 fallback 합니다.")
+        fallback_p = dict(order_p)
+        fallback_p["order_date_from"] = order_start_date
+        fallback_p["order_date_to"] = order_end_date
+        order_df = _download_excel_df(dl_url, fallback_p)
+        last_from = order_start_date
+        last_to = order_end_date
+
     order_path = os.path.join(git_repo_path, "order.csv")
     order_df.to_csv(order_path, index=False, encoding="utf-8-sig")
     print("✅ order.csv 생성 완료")
 
-    return {"order_rows": int(order_df.shape[0]), "delivery_rows": int(delivery_df.shape[0])}
+    return {
+        "order_rows": int(order_df.shape[0]),
+        "delivery_rows": int(delivery_df.shape[0]),
+        "order_target_max_rows": ORDER_TARGET_MAX_ROWS,
+        "order_selected_months": len(included),
+        "order_window_from": last_from,
+        "order_window_to": last_to,
+    }
 
 
 # ==========================================
