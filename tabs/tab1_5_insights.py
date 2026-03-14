@@ -17,6 +17,7 @@ def _is_cheongho(df: pd.DataFrame) -> pd.Series:
 def _center_style(df: pd.DataFrame):
     return (
         df.style.set_properties(**{"text-align": "center"})
+        .hide(axis="index")
         .set_table_styles([{"selector": "th", "props": [("text-align", "center")]}])
     )
 
