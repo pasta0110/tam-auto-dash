@@ -2,13 +2,13 @@ import streamlit as st
 from config import V_ORDER
 
 from .charts import dual_axis_figure, paged_bar_figure
-from .metrics import REQUIRED_COLS, bar_view_data, build_total_compare, dual_axis_data, prepare_work_df
+from .metrics import REQUIRED_COLS, bar_view_data, build_total_compare_with_snapshot, dual_axis_data, prepare_work_df
 
 TAB2_PAGE_KEY = "tab2_p_idx"
 TAB2_CENTER_KEY = "tab2_center"
 
 
-def render(ana_df):
+def render(ana_df, run_meta=None):
     st.title("🚛 배송사별 비교 및 추이")
 
     if ana_df is None or ana_df.empty:
@@ -25,7 +25,7 @@ def render(ana_df):
         st.warning("청호나이스 기준 데이터가 없습니다.")
         return
 
-    total_compare, all_months = build_total_compare(work_df)
+    total_compare, all_months = build_total_compare_with_snapshot(work_df, run_meta=run_meta)
     total_len = len(all_months)
 
     if total_len > 0:
@@ -65,12 +65,12 @@ def render(ana_df):
 
     st.divider()
 
-    active_all_centers = [v for v in V_ORDER if v in work_df["배송사_정제"].unique()]
+    active_all_centers = [v for v in V_ORDER if v in total_compare["지역센터"].unique()]
     if not active_all_centers:
         st.warning("선택 가능한 배송사가 없습니다.")
         return
 
     sel_v = st.selectbox("🎯 상세 분석 배송사 선택", active_all_centers, key=TAB2_CENTER_KEY)
-    df_combined = dual_axis_data(work_df, sel_v)
+    df_combined = dual_axis_data(total_compare, sel_v)
     fig_dual = dual_axis_figure(df_combined, sel_v)
     st.plotly_chart(fig_dual, use_container_width=True, key="dual_axis_chart")

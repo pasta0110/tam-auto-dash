@@ -96,7 +96,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
         tab1_5_insights.render(order_df, delivery_df, ctx)
         
     with tab2:
-        tab2_delivery.render(ana_df)
+        tab2_delivery.render(ana_df, run_meta=run_meta)
         
     with tab3:
         tab3_prediction.render(ana_df, ctx)
