@@ -4,6 +4,7 @@
 import pandas as pd
 import streamlit as st
 from utils.text_utils import clean_v, get_qty, get_main_cat, check_panel
+from services.domain_rules import filter_cheongho, delivery_event_flags
 
 def _mode_or_first(series: pd.Series):
     s = series.dropna().astype(str)
@@ -28,10 +29,8 @@ def build_order_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd
     o = order_df.copy()
     d = delivery_df.copy() if delivery_df is not None else pd.DataFrame()
 
-    if "매출처" in o.columns:
-        o = o[o["매출처"].astype(str).eq("청호나이스")].copy()
-    if "매출처" in d.columns:
-        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
+    o = filter_cheongho(o)
+    d = filter_cheongho(d)
 
     base = (
         o.groupby("주문번호", dropna=False)
@@ -51,14 +50,11 @@ def build_order_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd
         for c in ["AS_이벤트수", "교환_이벤트수", "반품_이벤트수", "취소_이벤트수"]:
             base[c] = 0
     else:
-        ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
-        order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
-        ship_status = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
-
-        as_m = ship_type.eq("AS")
-        ex_m = ship_type.eq("교환")
-        ret_m = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
-        cancel_m = ship_status.eq("미설치")
+        flags = delivery_event_flags(d)
+        as_m = flags["is_as"]
+        ex_m = flags["is_exchange"]
+        ret_m = flags["is_return"]
+        cancel_m = flags["is_cancel"]
 
         ev = (
             d.assign(_as=as_m.astype(int), _ex=ex_m.astype(int), _ret=ret_m.astype(int), _can=cancel_m.astype(int))

@@ -3,6 +3,7 @@
 
 import pandas as pd
 import streamlit as st
+from services.domain_rules import cheongho_mask, filter_cheongho, delivery_event_flags
 
 
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
@@ -10,9 +11,7 @@ def _safe_to_datetime(s: pd.Series) -> pd.Series:
 
 
 def _is_cheongho(df: pd.DataFrame) -> pd.Series:
-    if "매출처" not in df.columns:
-        return pd.Series(True, index=df.index)
-    return df["매출처"].astype(str).eq("청호나이스")
+    return cheongho_mask(df)
 
 def _center_style(df: pd.DataFrame):
     return (
@@ -91,8 +90,7 @@ def _build_event_seller_summary(order_df: pd.DataFrame, delivery_df: pd.DataFram
     if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
         return pd.DataFrame()
 
-    d = delivery_df.copy()
-    d = d[_is_cheongho(d)].copy()
+    d = filter_cheongho(delivery_df.copy())
     if "배송예정일" not in d.columns:
         return pd.DataFrame()
 
@@ -106,17 +104,12 @@ def _build_event_seller_summary(order_df: pd.DataFrame, delivery_df: pd.DataFram
     seller_col = "판매인"
     branch_col = "판매지국"
 
-    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
-    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
-    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
-    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
-
-    is_complete = order_stat.str.contains("완료", na=False) | ship_stat.str.contains("완료|4", na=False)
-    is_normal_complete = order_type.eq("정상") & is_complete
-    is_cancel = ship_stat.eq("미설치") | order_stat.eq("주문취소")
-    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
-    is_as = ship_type.eq("AS")
-    is_exchange = ship_type.eq("교환")
+    flags = delivery_event_flags(d)
+    is_normal_complete = flags["is_normal_complete"]
+    is_cancel = flags["is_cancel"]
+    is_return = flags["is_return"]
+    is_as = flags["is_as"]
+    is_exchange = flags["is_exchange"]
 
     key_cols = ["주문번호", seller_col] + ([branch_col] if branch_col else [])
     dm = d[key_cols].copy()
@@ -166,8 +159,7 @@ def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.
     if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
         return pd.DataFrame()
 
-    d = delivery_df.copy()
-    d = d[_is_cheongho(d)].copy()
+    d = filter_cheongho(delivery_df.copy())
     if d.empty:
         return pd.DataFrame()
 
@@ -188,14 +180,9 @@ def _build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.
     if "주문번호" not in d.columns:
         return pd.DataFrame()
 
-    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
-    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
-    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
-    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
-
-    is_complete = order_stat.str.contains("완료", na=False) | ship_stat.str.contains("완료|4", na=False)
-    normal_complete = order_type.eq("정상") & is_complete & d["배송예정일_DT"].notna()
-    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
+    flags = delivery_event_flags(d)
+    normal_complete = flags["is_normal_complete"] & d["배송예정일_DT"].notna()
+    is_return = flags["is_return"]
 
     comp = d[normal_complete].copy()
     if comp.empty:
@@ -246,9 +233,7 @@ def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame
     if delivery_df is None or delivery_df.empty or "주문번호" not in delivery_df.columns:
         return pd.DataFrame()
 
-    d = delivery_df.copy()
-    if "매출처" in d.columns:
-        d = d[d["매출처"].astype(str).eq("청호나이스")].copy()
+    d = filter_cheongho(delivery_df.copy())
 
     if "배송예정일" not in d.columns:
         return pd.DataFrame()
@@ -259,21 +244,12 @@ def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame
     if d.empty:
         return pd.DataFrame()
 
-    ship_type = d["배송유형"].astype(str) if "배송유형" in d.columns else pd.Series("", index=d.index)
-    order_type = d["주문유형"].astype(str) if "주문유형" in d.columns else pd.Series("", index=d.index)
-    order_stat = d["주문상태"].astype(str) if "주문상태" in d.columns else pd.Series("", index=d.index)
-    ship_stat = d["배송상태"].astype(str) if "배송상태" in d.columns else pd.Series("", index=d.index)
-
-    is_cancel = ship_stat.eq("미설치")
-    is_exchange = ship_type.eq("교환")
-    is_as = ship_type.eq("AS")
-    is_return = ship_type.isin(["반품", "회수"]) | order_type.eq("반품")
-    is_normal_strict = (
-        order_type.eq("정상")
-        & ~order_stat.eq("주문취소")
-        & ship_type.eq("정상")
-        & ~ship_stat.eq("미설치")
-    )
+    flags = delivery_event_flags(d)
+    is_cancel = flags["is_cancel"]
+    is_exchange = flags["is_exchange"]
+    is_as = flags["is_as"]
+    is_return = flags["is_return"]
+    is_normal_strict = flags["is_normal_strict"]
 
     by_order_month = (
         d.assign(
@@ -315,8 +291,7 @@ def _build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame
     # 주문정보 매핑(있으면) - join key는 주문번호만 사용
     o = order_df.copy() if order_df is not None else pd.DataFrame()
     if not o.empty and "주문번호" in o.columns:
-        if "매출처" in o.columns:
-            o = o[o["매출처"].astype(str).eq("청호나이스")].copy()
+        o = filter_cheongho(o)
 
         cols = [c for c in ["주문번호", "판매인", "판매지국", "수취인", "상품코드", "상품명", "등록일"] if c in o.columns]
         if cols:

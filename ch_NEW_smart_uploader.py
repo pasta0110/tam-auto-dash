@@ -6,10 +6,10 @@ import shutil
 import traceback
 import requests
 import pandas as pd
-import hashlib
 from io import BytesIO
 import calendar
 from datetime import datetime
+from services.integrity import file_sha256
 
 
 # Windows 기본 콘솔(cp949 등)에서 이모지 출력 시 UnicodeEncodeError가 날 수 있어 UTF-8로 고정
@@ -93,13 +93,6 @@ def _download_excel_df(dl_url: str, params: dict) -> pd.DataFrame:
     resp.raise_for_status()
     return pd.read_excel(BytesIO(resp.content))
 
-
-def _file_sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 # ==========================================
 # 2. ERP CSV 다운로드
