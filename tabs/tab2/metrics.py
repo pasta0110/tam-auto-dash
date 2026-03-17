@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+from services.aggregations import aggregate_month_center_counts
 
 
 REQUIRED_COLS = {"연월_키", "배송사_정제", "주문유형", "배송상태", "매출처"}
@@ -34,11 +35,7 @@ def build_total_compare(work_df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]
     if work_df is None or work_df.empty:
         return pd.DataFrame(), []
 
-    total_compare = (
-        work_df.groupby(["연월_키", "월일자", "배송사_정제"], as_index=False)
-        .size()
-        .rename(columns={"배송사_정제": "지역센터", "size": "완료건수"})
-    )
+    total_compare = aggregate_month_center_counts(work_df)
     all_months = (
         total_compare[["연월_키", "월일자"]]
         .drop_duplicates()
@@ -49,13 +46,7 @@ def build_total_compare(work_df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]
 
 
 def _aggregate_month_center(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["연월_키", "월일자", "지역센터", "완료건수"])
-    return (
-        df.groupby(["연월_키", "월일자", "배송사_정제"], as_index=False)
-        .size()
-        .rename(columns={"배송사_정제": "지역센터", "size": "완료건수"})
-    )
+    return aggregate_month_center_counts(df)
 
 
 def _expected_fixed_meta(run_meta: dict | None, last_fixed_month: str, fixed_rows: int) -> dict:

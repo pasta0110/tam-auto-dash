@@ -9,6 +9,7 @@ import data_loader
 from data_processor import process_data
 from services.order_window import order_month_coverage
 from services.integrity import meta_hash_status
+from services.data_contract import validate_raw_inputs
 
 # 탭 모듈 임포트 (각 기능을 담당)
 from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab3_prediction, tab4_validation, tab5_map
@@ -97,6 +98,13 @@ if parts:
     st.caption("데이터 기준: " + " | ".join(parts))
 
 if raw_order_df is not None and raw_delivery_df is not None:
+    contract_results = validate_raw_inputs(raw_order_df, raw_delivery_df)
+    invalid = [r for r in contract_results if not r.ok]
+    if invalid:
+        for r in invalid:
+            st.error(f"{r.name} 필수 컬럼 누락: {', '.join(r.missing)}")
+        st.stop()
+
     # 데이터 가공 (컬럼 추가, 필터링 등)
     order_df, delivery_df, ana_df = process_data(raw_order_df, raw_delivery_df)
 
