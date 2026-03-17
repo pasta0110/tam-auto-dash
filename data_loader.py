@@ -8,7 +8,6 @@ import requests
 import json
 from io import BytesIO
 from config import (
-    DATA_URL,
     ORDER_CSV_PATH,
     DELIVERY_CSV_PATH,
     ORDER_CSV_URL,
@@ -164,7 +163,6 @@ def get_data_snapshot_info():
 def load_raw_data():
     """
     로컬 CSV 우선 로드, 없으면 원격 CSV 로드 (캐싱 적용: 5분)
-    (레거시) 둘 다 실패하면 원격 엑셀(DATA_URL)로 시도
     """
     try:
         ord_df = None
@@ -191,12 +189,7 @@ def load_raw_data():
             del_df = None
 
         if ord_df is None or del_df is None:
-            response = requests.get(DATA_URL, timeout=20)
-            response.raise_for_status()
-            with BytesIO(response.content) as f:
-                ord_df = pd.read_excel(f, sheet_name="주문건")
-                f.seek(0)
-                del_df = pd.read_excel(f, sheet_name="출고건", skiprows=13)
+            raise RuntimeError("order.csv 또는 delivery.csv 로드에 실패했습니다.")
              
         # 컬럼명 공백 제거
         ord_df.columns = [str(c).strip() for c in ord_df.columns]

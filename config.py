@@ -22,7 +22,6 @@ GITHUB_OWNER = "pasta0110"
 GITHUB_REPO = "tam-auto-dash"
 
 # (레거시) 원격 엑셀
-DATA_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/data.xlsx"
 
 # 캐시 스키마 버전 (집계/파이프라인 로직 변경 시 버전 증가)
 CACHE_SCHEMA_VERSION = "2026.03.17.v2"
