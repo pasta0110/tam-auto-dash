@@ -3,7 +3,6 @@ import sys
 import json
 import hashlib
 import argparse
-import subprocess
 import traceback
 import time
 import requests
@@ -12,6 +11,23 @@ from io import BytesIO
 import calendar
 from datetime import datetime
 from services.integrity import file_sha256
+from uploader.runtime import build_runtime_config
+from uploader.credentials import get_erp_credentials
+from uploader.notifier import notify_telegram
+from uploader.state_store import (
+    now_kst as _state_now_kst,
+    write_run_meta as _state_write_run_meta,
+    read_uploader_status as _state_read_uploader_status,
+    write_uploader_status as _state_write_uploader_status,
+    acquire_lock as _state_acquire_lock,
+    release_lock as _state_release_lock,
+)
+from uploader.git_ops import (
+    run as _git_run,
+    git_index_sha256 as _git_index_sha256_impl,
+    git_sync as _git_sync,
+    git_push_with_retry as _git_push_with_retry,
+)
 
 
 # Windows 기본 콘솔(cp949 등)에서 이모지 출력 시 UnicodeEncodeError가 날 수 있어 UTF-8로 고정
@@ -26,51 +42,19 @@ def _configure_utf8_stdio():
 _configure_utf8_stdio()
 
 def _now_kst():
-    try:
-        from zoneinfo import ZoneInfo
-
-        return datetime.now(ZoneInfo("Asia/Seoul"))
-    except Exception:
-        return datetime.now()
+    return _state_now_kst()
 
 
 def _write_run_meta(path: str, meta: dict):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    _state_write_run_meta(path, meta)
 
 
 def _write_uploader_status(ok: bool, code: int, message: str, extra: dict | None = None):
-    prev = _read_uploader_status()
-    prev_failures = int(prev.get("consecutive_failures", 0) or 0)
-    next_failures = 0 if ok else (prev_failures + 1)
-    payload = {
-        "ok": bool(ok),
-        "exit_code": int(code),
-        "message": str(message),
-        "updated_at_kst": _now_kst().strftime("%Y-%m-%d %H:%M:%S KST"),
-        "log_file": os.getenv("UPLOADER_LOG_FILE", ""),
-        "consecutive_failures": next_failures,
-    }
-    if extra:
-        payload.update(extra)
-    try:
-        with open(uploader_status_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    _state_write_uploader_status(uploader_status_path, ok=ok, code=code, message=message, extra=extra)
 
 
 def _read_uploader_status() -> dict:
-    try:
-        if os.path.exists(uploader_status_path):
-            with open(uploader_status_path, "r", encoding="utf-8") as f:
-                return json.load(f) or {}
-    except Exception:
-        pass
-    return {}
+    return _state_read_uploader_status(uploader_status_path)
 
 
 def _retry_delays() -> list[int]:
@@ -92,18 +76,7 @@ def _retry_delays() -> list[int]:
 
 
 def _notify_telegram(msg: str):
-    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        return
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
-            timeout=8,
-        )
-    except Exception:
-        return
+    notify_telegram(msg)
 
 
 def _with_retry(step_name: str, fn):
@@ -124,71 +97,28 @@ def _with_retry(step_name: str, fn):
 
 
 def _acquire_lock() -> tuple[bool, str]:
-    try:
-        if os.path.exists(LOCK_FILE_PATH):
-            age = time.time() - os.path.getmtime(LOCK_FILE_PATH)
-            if age < 60 * 60 * 6:
-                return False, f"lock exists ({int(age)}s)"
-            # stale lock cleanup
-            os.remove(LOCK_FILE_PATH)
-        with open(LOCK_FILE_PATH, "w", encoding="utf-8") as f:
-            f.write(f"{os.getpid()}|{_now_kst().strftime('%Y-%m-%d %H:%M:%S KST')}\n")
-        return True, "ok"
-    except Exception as e:
-        return False, str(e)
+    return _state_acquire_lock(LOCK_FILE_PATH)
 
 
 def _release_lock():
-    try:
-        if os.path.exists(LOCK_FILE_PATH):
-            os.remove(LOCK_FILE_PATH)
-    except Exception:
-        pass
+    _state_release_lock(LOCK_FILE_PATH)
 
 
 def _run(cmd: list[str], cwd: str | None = None, check: bool = True):
-    """
-    subprocess 실행 래퍼:
-    - 실패 시 stdout/stderr를 즉시 출력해 원인 은폐를 막음
-    """
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if check and result.returncode != 0:
-        print(f"[ERROR] Command failed: {' '.join(cmd)}")
-        if result.stdout:
-            print("[stdout]")
-            print(result.stdout.strip())
-        if result.stderr:
-            print("[stderr]")
-            print(result.stderr.strip())
-        raise RuntimeError(f"command failed ({result.returncode}): {' '.join(cmd)}")
-    return result
+    return _git_run(cmd, cwd=cwd, check=check)
 
 
 def _git_index_sha256(path: str) -> str | None:
-    """
-    Git 인덱스(:path)에 올라간 실제 바이트 기준 SHA256.
-    OS 줄바꿈(CRLF/LF) 차이로 생기는 오탐을 방지한다.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "show", f":{path}"],
-            cwd=git_repo_path,
-            capture_output=True,
-            text=False,
-        )
-        if result.returncode != 0:
-            return None
-        return hashlib.sha256(result.stdout or b"").hexdigest()
-    except Exception:
-        return None
+    return _git_index_sha256_impl(path, git_repo_path)
 
 # ==========================================
 # 1. 기본 설정
 # ==========================================
 
-DEFAULT_REPO_PATH = os.getenv("TDU_REPO_PATH", os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_GIT_REMOTE = os.getenv("TDU_GIT_REMOTE", "origin")
-DEFAULT_GIT_BRANCH = os.getenv("TDU_GIT_BRANCH", "main")
+runtime_cfg = build_runtime_config()
+DEFAULT_REPO_PATH = runtime_cfg.repo_path
+DEFAULT_GIT_REMOTE = runtime_cfg.git_remote
+DEFAULT_GIT_BRANCH = runtime_cfg.git_branch
 
 git_repo_path = DEFAULT_REPO_PATH
 git_remote = DEFAULT_GIT_REMOTE
@@ -219,12 +149,13 @@ MAX_CONSECUTIVE_FAILURES = 3
 
 def configure_runtime(repo_path: str | None = None, remote: str | None = None, branch: str | None = None):
     global git_repo_path, git_remote, git_branch, run_meta_path, uploader_status_path, LOCK_FILE_PATH
-    git_repo_path = os.path.abspath(repo_path or DEFAULT_REPO_PATH)
-    git_remote = (remote or DEFAULT_GIT_REMOTE).strip() or "origin"
-    git_branch = (branch or DEFAULT_GIT_BRANCH).strip() or "main"
-    run_meta_path = os.path.join(git_repo_path, "erp_run_meta.json")
-    uploader_status_path = os.path.join(git_repo_path, "uploader_status.json")
-    LOCK_FILE_PATH = os.path.join(git_repo_path, ".uploader.lock")
+    cfg = build_runtime_config(repo_path=repo_path, remote=remote, branch=branch)
+    git_repo_path = cfg.repo_path
+    git_remote = cfg.git_remote
+    git_branch = cfg.git_branch
+    run_meta_path = cfg.run_meta_path
+    uploader_status_path = cfg.uploader_status_path
+    LOCK_FILE_PATH = cfg.lock_file_path
 
 
 configure_runtime()
@@ -275,15 +206,7 @@ def _download_excel_df(dl_url: str, params: dict) -> pd.DataFrame:
 # ==========================================
 
 def _get_erp_credentials():
-    login_id = os.getenv("ERP_LOGIN_ID")
-    login_pw = os.getenv("ERP_LOGIN_PW")
-    if not login_id or not login_pw:
-        raise RuntimeError(
-            "Missing ERP credentials in environment variables (ERP_LOGIN_ID, ERP_LOGIN_PW).\n"
-            "- PowerShell (current session): $env:ERP_LOGIN_ID='YOUR_ID'; $env:ERP_LOGIN_PW='YOUR_PW'\n"
-            "- Persistent: setx ERP_LOGIN_ID \"YOUR_ID\"; setx ERP_LOGIN_PW \"YOUR_PW\""
-        )
-    return login_id, login_pw
+    return get_erp_credentials()
 
 
 def download_erp_csv():
@@ -624,10 +547,7 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
         try:
             if simulate_fail_step == "git":
                 raise RuntimeError("simulated git sync failure")
-            _with_retry("git_sync", lambda: (
-                _run(["git", "fetch", git_remote, git_branch], cwd=git_repo_path, check=True),
-                _run(["git", "pull", "--rebase", "--autostash", git_remote, git_branch], cwd=git_repo_path, check=True),
-            ))
+            _with_retry("git_sync", lambda: _git_sync(git_repo_path, git_remote, git_branch))
         except Exception as e:
             _write_uploader_status(False, EXIT_GIT_SYNC, f"Git sync failed: {e}")
             _notify_telegram(f"🚨 업로더 실패(GIT_SYNC)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
@@ -701,13 +621,7 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
         try:
             if simulate_fail_step == "push":
                 raise RuntimeError("simulated push failure")
-            try:
-                _run(["git", "push", git_remote, git_branch], cwd=git_repo_path, check=True)
-            except Exception:
-                # push 실패 시 1회 안전 재시도
-                _run(["git", "fetch", git_remote, git_branch], cwd=git_repo_path, check=True)
-                _run(["git", "pull", "--rebase", "--autostash", git_remote, git_branch], cwd=git_repo_path, check=True)
-                _run(["git", "push", git_remote, git_branch], cwd=git_repo_path, check=True)
+            _git_push_with_retry(git_repo_path, git_remote, git_branch)
         except Exception as e:
             _write_uploader_status(False, EXIT_PUSH, f"Push failed: {e}")
             _notify_telegram(f"🚨 업로더 실패(PUSH)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")

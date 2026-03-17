@@ -8,6 +8,8 @@
 - 공통 서비스: `services/`
 - 데이터 로딩/전처리: `data_loader.py`, `data_processor.py`
 - 업로더(표준): `ch_NEW_smart_uploader.py`
+- 앱 런타임 보조: `services/app_runtime.py`, `services/app_contract.py`, `services/app_processed.py`, `services/app_ops.py`
+- 업로더 모듈: `uploader/runtime.py`, `uploader/credentials.py`, `uploader/state_store.py`, `uploader/git_ops.py`, `uploader/notifier.py`
 
 ## 2) 현재 데이터 파이프라인
 - 원천 파일: `order.csv`, `delivery.csv`
