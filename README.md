@@ -5,6 +5,7 @@
 ## 1) 구성
 - 앱 진입점: `app.py`
 - 탭 화면: `tabs/`
+- 예외 큐 탭: `tabs/tab2_5_exception.py` (SLA/지연 리스크 기반 조치 우선순위)
 - 공통 서비스: `services/`
 - 데이터 로딩/전처리: `data_loader.py`, `data_processor.py`
 - 업로더(표준): `ch_NEW_smart_uploader.py`

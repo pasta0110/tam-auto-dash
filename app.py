@@ -15,7 +15,7 @@ from services.app_processed import get_processed_payload, ensure_payload_compute
 from services.app_ops import should_show_ops, render_ops_panel
 
 # 탭 모듈 임포트 (각 기능을 담당)
-from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab3_prediction, tab4_validation, tab5_map
+from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab2_5_exception, tab3_prediction, tab4_validation, tab5_map
 
 # 1. 페이지 기본 설정 (가장 먼저 실행되어야 함)
 st.set_page_config(
@@ -88,6 +88,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
         "📋 1. 종합 현황",
         "📌 1.5 인사이트",
         "📈 2. 배송사별 분석",
+        "⚠️ 2.5 운영 예외 큐",
         "🚀 3. 당월 출고 예측",
         "🔍 4. 예측 모델 검증",
         "📍 5. 배송 지도",
@@ -102,8 +103,10 @@ if raw_order_df is not None and raw_delivery_df is not None:
     elif selected_view == views[2]:
         tab2_delivery.render(ana_df, run_meta=run_meta, cache_key=cache_key)
     elif selected_view == views[3]:
-        tab3_prediction.render(ana_df, ctx, cache_key=cache_key)
+        tab2_5_exception.render(delivery_df, ctx, cache_key=cache_key)
     elif selected_view == views[4]:
+        tab3_prediction.render(ana_df, ctx, cache_key=cache_key)
+    elif selected_view == views[5]:
         tab4_validation.render(ana_df, ctx, cache_key=cache_key)
     else:
         tab5_map.render(ana_df, cache_key=cache_key)
