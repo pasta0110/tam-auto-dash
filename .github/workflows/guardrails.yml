@@ -50,7 +50,12 @@ jobs:
             exit 0
           fi
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          MSG="✅ 통과 | ${GITHUB_REPOSITORY} | ${GITHUB_REF_NAME} | ${SHORT_SHA}"
+          CHANGE_SUMMARY=$(git log -1 --pretty=%s | tr -d '\n' | cut -c1-120)
+          MSG="✅ 가드레일 통과
+저장소: ${GITHUB_REPOSITORY}
+브랜치: ${GITHUB_REF_NAME}
+커밋: ${SHORT_SHA}
+수정: ${CHANGE_SUMMARY}"
           RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "disable_web_page_preview=true" \
@@ -69,7 +74,12 @@ jobs:
             exit 0
           fi
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          MSG="🚨 실패 | ${GITHUB_REPOSITORY} | ${GITHUB_REF_NAME} | ${SHORT_SHA}"
+          CHANGE_SUMMARY=$(git log -1 --pretty=%s | tr -d '\n' | cut -c1-120)
+          MSG="🚨 가드레일 실패
+저장소: ${GITHUB_REPOSITORY}
+브랜치: ${GITHUB_REF_NAME}
+커밋: ${SHORT_SHA}
+수정: ${CHANGE_SUMMARY}"
           RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "disable_web_page_preview=true" \
