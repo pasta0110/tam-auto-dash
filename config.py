@@ -72,9 +72,36 @@ tr:has(th:contains("판넬")) th, tr:has(td:contains("판넬")) td {
     color: #31333F !important;
 }
 /* 모바일 기기 보정 */
-@media (max-width: 640px) {
-    .stTable {
+@media (max-width: 768px) {
+    .block-container {
+        padding-top: 0.8rem !important;
+        padding-bottom: 0.8rem !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+    }
+    h1 {
+        font-size: 1.55rem !important;
+        line-height: 1.25 !important;
+    }
+    h2, h3 {
+        font-size: 1.15rem !important;
+        line-height: 1.25 !important;
+    }
+    button[data-baseweb="tab"] {
         font-size: 12px !important;
+        padding: 0.2rem 0.4rem !important;
+    }
+    .stTable, .stDataFrame {
+        font-size: 12px !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.72rem !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.15rem !important;
+    }
+    [data-testid="stHorizontalBlock"] {
+        gap: 0.45rem !important;
     }
 }
 /* 상단 탭 글자 크기 조정 */

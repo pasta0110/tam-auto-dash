@@ -7,6 +7,9 @@ from services.exception_ops import build_exception_pack
 def render(delivery_df, ctx, cache_key=None):
     st.title("⚠️ 2.5 운영 예외 큐")
     st.caption("활성 주문상태(주문확정/배송준비/배송중) 기준으로, 주문등록일→배송예정일 영업일 계획 대비 지연 리스크를 우선순위화합니다.")
+    mobile_mode = str(st.query_params.get("mobile", "0")) == "1"
+    if mobile_mode:
+        st.caption("모바일 최적화 모드: 핵심 컬럼만 표시")
 
     state_key = f"tab2_5_exception::{cache_key}::{ctx.get('m_key')}::{ctx.get('yesterday_str')}"
     if state_key not in st.session_state:
@@ -28,25 +31,46 @@ def render(delivery_df, ctx, cache_key=None):
     if q is None or q.empty:
         st.info("현재 기준 예외 큐가 없습니다.")
     else:
-        limit = st.slider("표시 건수", min_value=20, max_value=300, value=80, step=20, key="exc_limit")
-        st.dataframe(q.head(limit), use_container_width=True, hide_index=True, height=420)
+        default_limit = 40 if mobile_mode else 80
+        limit = st.slider("표시 건수", min_value=20, max_value=300, value=default_limit, step=20, key="exc_limit")
+        qv = q.head(limit).copy()
+        if mobile_mode:
+            keep_cols = [c for c in ["주문번호", "배송예정일", "초과영업일", "리스크구분", "리스크점수", "배송사_정제"] if c in qv.columns]
+            if keep_cols:
+                qv = qv[keep_cols]
+        st.dataframe(qv, use_container_width=True, hide_index=True, height=420)
 
-    col_l, col_r = st.columns(2)
-    with col_l:
+    if mobile_mode:
         st.subheader("2) 권역별 원인 분포")
         causes = pack.get("causes", pd.DataFrame())
         if causes is None or causes.empty:
             st.info("원인 분포 데이터가 없습니다.")
         else:
-            st.dataframe(causes, use_container_width=True, hide_index=True, height=320)
+            st.dataframe(causes, use_container_width=True, hide_index=True, height=280)
 
-    with col_r:
         st.subheader("3) 당월 비정상 이벤트")
         abnormal = pack.get("abnormal", pd.DataFrame())
         if abnormal is None or abnormal.empty:
             st.info("비정상 이벤트 데이터가 없습니다.")
         else:
-            st.dataframe(abnormal, use_container_width=True, hide_index=True, height=320)
+            st.dataframe(abnormal, use_container_width=True, hide_index=True, height=240)
+    else:
+        col_l, col_r = st.columns(2)
+        with col_l:
+            st.subheader("2) 권역별 원인 분포")
+            causes = pack.get("causes", pd.DataFrame())
+            if causes is None or causes.empty:
+                st.info("원인 분포 데이터가 없습니다.")
+            else:
+                st.dataframe(causes, use_container_width=True, hide_index=True, height=320)
+
+        with col_r:
+            st.subheader("3) 당월 비정상 이벤트")
+            abnormal = pack.get("abnormal", pd.DataFrame())
+            if abnormal is None or abnormal.empty:
+                st.info("비정상 이벤트 데이터가 없습니다.")
+            else:
+                st.dataframe(abnormal, use_container_width=True, hide_index=True, height=320)
 
     st.info(
         "권장 운영 액션: "
