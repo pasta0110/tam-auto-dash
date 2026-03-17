@@ -11,17 +11,15 @@ DELIVERY_CSV_PATH = os.path.join(BASE_DIR, "delivery.csv")
 ERP_RUN_META_PATH = os.path.join(BASE_DIR, "erp_run_meta.json")
 UPLOADER_STATUS_PATH = os.path.join(BASE_DIR, "uploader_status.json")
 
+GITHUB_OWNER = os.getenv("TDU_GITHUB_OWNER", "pasta0110")
+GITHUB_REPO = os.getenv("TDU_GITHUB_REPO", "tam-auto-dash")
+GITHUB_BRANCH = os.getenv("TDU_GITHUB_BRANCH", "main")
+
 # 원격 CSV (레포에 csv가 포함되어 있으면 보통 필요 없지만, 배포 환경 대비용)
-ORDER_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/order.csv"
-DELIVERY_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/delivery.csv"
-ERP_RUN_META_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/erp_run_meta.json"
-UPLOADER_STATUS_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/uploader_status.json"
-
-# GitHub repo info (commit time lookup fallback)
-GITHUB_OWNER = "pasta0110"
-GITHUB_REPO = "tam-auto-dash"
-
-# (레거시) 원격 엑셀
+ORDER_CSV_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/raw/refs/heads/{GITHUB_BRANCH}/order.csv"
+DELIVERY_CSV_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/raw/refs/heads/{GITHUB_BRANCH}/delivery.csv"
+ERP_RUN_META_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/raw/refs/heads/{GITHUB_BRANCH}/erp_run_meta.json"
+UPLOADER_STATUS_URL = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/raw/refs/heads/{GITHUB_BRANCH}/uploader_status.json"
 
 # 캐시 스키마 버전 (집계/파이프라인 로직 변경 시 버전 증가)
 CACHE_SCHEMA_VERSION = "2026.03.17.v2"

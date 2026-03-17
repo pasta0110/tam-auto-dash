@@ -186,7 +186,13 @@ def _git_index_sha256(path: str) -> str | None:
 # 1. 기본 설정
 # ==========================================
 
-git_repo_path = r"C:\Users\alcls\Documents\tam-auto-dash"
+DEFAULT_REPO_PATH = os.getenv("TDU_REPO_PATH", os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_GIT_REMOTE = os.getenv("TDU_GIT_REMOTE", "origin")
+DEFAULT_GIT_BRANCH = os.getenv("TDU_GIT_BRANCH", "main")
+
+git_repo_path = DEFAULT_REPO_PATH
+git_remote = DEFAULT_GIT_REMOTE
+git_branch = DEFAULT_GIT_BRANCH
 run_meta_path = os.path.join(git_repo_path, "erp_run_meta.json")
 uploader_status_path = os.path.join(git_repo_path, "uploader_status.json")
 
@@ -209,6 +215,19 @@ EXIT_UNKNOWN = 1
 LOCK_FILE_PATH = os.path.join(git_repo_path, ".uploader.lock")
 DEFAULT_RETRY_DELAYS = [30, 60, 120]
 MAX_CONSECUTIVE_FAILURES = 3
+
+
+def configure_runtime(repo_path: str | None = None, remote: str | None = None, branch: str | None = None):
+    global git_repo_path, git_remote, git_branch, run_meta_path, uploader_status_path, LOCK_FILE_PATH
+    git_repo_path = os.path.abspath(repo_path or DEFAULT_REPO_PATH)
+    git_remote = (remote or DEFAULT_GIT_REMOTE).strip() or "origin"
+    git_branch = (branch or DEFAULT_GIT_BRANCH).strip() or "main"
+    run_meta_path = os.path.join(git_repo_path, "erp_run_meta.json")
+    uploader_status_path = os.path.join(git_repo_path, "uploader_status.json")
+    LOCK_FILE_PATH = os.path.join(git_repo_path, ".uploader.lock")
+
+
+configure_runtime()
 
 def _shift_month(year: int, month: int, delta_months: int):
     m = month + delta_months
@@ -606,8 +625,8 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
             if simulate_fail_step == "git":
                 raise RuntimeError("simulated git sync failure")
             _with_retry("git_sync", lambda: (
-                _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True),
-                _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True),
+                _run(["git", "fetch", git_remote, git_branch], cwd=git_repo_path, check=True),
+                _run(["git", "pull", "--rebase", "--autostash", git_remote, git_branch], cwd=git_repo_path, check=True),
             ))
         except Exception as e:
             _write_uploader_status(False, EXIT_GIT_SYNC, f"Git sync failed: {e}")
@@ -683,12 +702,12 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
             if simulate_fail_step == "push":
                 raise RuntimeError("simulated push failure")
             try:
-                _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+                _run(["git", "push", git_remote, git_branch], cwd=git_repo_path, check=True)
             except Exception:
                 # push 실패 시 1회 안전 재시도
-                _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
-                _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
-                _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+                _run(["git", "fetch", git_remote, git_branch], cwd=git_repo_path, check=True)
+                _run(["git", "pull", "--rebase", "--autostash", git_remote, git_branch], cwd=git_repo_path, check=True)
+                _run(["git", "push", git_remote, git_branch], cwd=git_repo_path, check=True)
         except Exception as e:
             _write_uploader_status(False, EXIT_PUSH, f"Push failed: {e}")
             _notify_telegram(f"🚨 업로더 실패(PUSH)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
@@ -714,6 +733,9 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-path", default=None, help="Git repo path (default: TDU_REPO_PATH or script dir).")
+    parser.add_argument("--git-remote", default=None, help="Git remote name (default: TDU_GIT_REMOTE or origin).")
+    parser.add_argument("--git-branch", default=None, help="Git branch name (default: TDU_GIT_BRANCH or main).")
     parser.add_argument("--health-check", action="store_true", help="Validate env/repo/git only and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Run full flow but skip push.")
     parser.add_argument(
@@ -723,6 +745,7 @@ if __name__ == "__main__":
         help="For validation only: simulate a failure at a specific step.",
     )
     args = parser.parse_args()
+    configure_runtime(repo_path=args.repo_path, remote=args.git_remote, branch=args.git_branch)
 
     if args.health_check:
         code, msg = health_check()

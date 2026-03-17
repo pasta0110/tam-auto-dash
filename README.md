@@ -31,6 +31,18 @@ streamlit run app.py
 python ch_NEW_smart_uploader.py
 ```
 
+경로/브랜치 오버라이드(선택):
+```bash
+python ch_NEW_smart_uploader.py --repo-path "C:\\path\\tam-auto-dash" --git-remote origin --git-branch main
+```
+
+환경변수(선택):
+- `TDU_REPO_PATH`
+- `TDU_GIT_REMOTE`
+- `TDU_GIT_BRANCH`
+- `TDU_GITHUB_OWNER`
+- `TDU_GITHUB_REPO`
+
 ### 점검 모드
 ```bash
 python ch_NEW_smart_uploader.py --health-check
