@@ -438,7 +438,8 @@ def upload_to_github():
 
         print("🔄 원격 저장소와 상태를 맞추는 중...")
         _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
-        _run(["git", "pull", "--rebase", "origin", "main"], cwd=git_repo_path, check=True)
+        # 자동화 환경에서 로컬 변경(order/delivery/meta 등)으로 pull이 막히는 경우를 방지
+        _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
 
         # ERP 데이터 다운로드 (git sync 이후에 실행해야 pull 충돌을 피할 수 있음)
         extracted_at = _now_kst()
