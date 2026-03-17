@@ -20,6 +20,23 @@
 - Dry run (commit only, no push): `python ch_NEW_smart_uploader.py --dry-run`
 - Runtime log file: `C:\Users\alcls\Documents\tam-auto-dash\logs\uploader_YYYYMMDD.log`
 - Uploader status json: `uploader_status.json`
+- Optional failure simulation: `python ch_NEW_smart_uploader.py --simulate-fail-step git|erp|push`
+
+### Uploader Exit Codes
+- `0`: success
+- `10`: missing ERP credentials
+- `11`: repo path not found
+- `12`: git sync failed
+- `13`: ERP download/login failed
+- `15`: commit stage failed
+- `16`: push failed
+- `20`: circuit open (consecutive failures)
+- `21`: locked (another uploader run in progress)
+
+### Watchdog
+- Script: `python tools/uploader_watchdog.py --max-age-min 90`
+- Purpose: fail if uploader status is stale or not-ok.
+- Recommended: schedule watchdog every 30 minutes.
 
 ## 3. Data Contract Errors in App
 1. Check app error block for `[code]` value.

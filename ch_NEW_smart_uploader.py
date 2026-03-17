@@ -4,6 +4,7 @@ import json
 import argparse
 import subprocess
 import traceback
+import time
 import requests
 import pandas as pd
 from io import BytesIO
@@ -41,18 +42,105 @@ def _write_run_meta(path: str, meta: dict):
 
 
 def _write_uploader_status(ok: bool, code: int, message: str, extra: dict | None = None):
+    prev = _read_uploader_status()
+    prev_failures = int(prev.get("consecutive_failures", 0) or 0)
+    next_failures = 0 if ok else (prev_failures + 1)
     payload = {
         "ok": bool(ok),
         "exit_code": int(code),
         "message": str(message),
         "updated_at_kst": _now_kst().strftime("%Y-%m-%d %H:%M:%S KST"),
         "log_file": os.getenv("UPLOADER_LOG_FILE", ""),
+        "consecutive_failures": next_failures,
     }
     if extra:
         payload.update(extra)
     try:
         with open(uploader_status_path, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _read_uploader_status() -> dict:
+    try:
+        if os.path.exists(uploader_status_path):
+            with open(uploader_status_path, "r", encoding="utf-8") as f:
+                return json.load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _retry_delays() -> list[int]:
+    raw = os.getenv("UPLOADER_RETRY_DELAYS", "").strip()
+    if not raw:
+        return DEFAULT_RETRY_DELAYS
+    out = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            v = int(tok)
+            if v >= 0:
+                out.append(v)
+        except Exception:
+            continue
+    return out or DEFAULT_RETRY_DELAYS
+
+
+def _notify_telegram(msg: str):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
+            timeout=8,
+        )
+    except Exception:
+        return
+
+
+def _with_retry(step_name: str, fn):
+    delays = _retry_delays()
+    attempts = len(delays) + 1
+    last_err = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            if i >= attempts - 1:
+                break
+            wait_s = delays[i]
+            print(f"[WARN] {step_name} failed (attempt {i+1}/{attempts}). retry in {wait_s}s")
+            time.sleep(wait_s)
+    raise RuntimeError(f"{step_name} failed after retries: {last_err}")
+
+
+def _acquire_lock() -> tuple[bool, str]:
+    try:
+        if os.path.exists(LOCK_FILE_PATH):
+            age = time.time() - os.path.getmtime(LOCK_FILE_PATH)
+            if age < 60 * 60 * 6:
+                return False, f"lock exists ({int(age)}s)"
+            # stale lock cleanup
+            os.remove(LOCK_FILE_PATH)
+        with open(LOCK_FILE_PATH, "w", encoding="utf-8") as f:
+            f.write(f"{os.getpid()}|{_now_kst().strftime('%Y-%m-%d %H:%M:%S KST')}\n")
+        return True, "ok"
+    except Exception as e:
+        return False, str(e)
+
+
+def _release_lock():
+    try:
+        if os.path.exists(LOCK_FILE_PATH):
+            os.remove(LOCK_FILE_PATH)
     except Exception:
         pass
 
@@ -95,7 +183,12 @@ EXIT_GIT_SYNC = 12
 EXIT_ERP = 13
 EXIT_COMMIT = 15
 EXIT_PUSH = 16
+EXIT_CIRCUIT_OPEN = 20
+EXIT_LOCKED = 21
 EXIT_UNKNOWN = 1
+LOCK_FILE_PATH = os.path.join(git_repo_path, ".uploader.lock")
+DEFAULT_RETRY_DELAYS = [30, 60, 120]
+MAX_CONSECUTIVE_FAILURES = 3
 
 def _shift_month(year: int, month: int, delta_months: int):
     m = month + delta_months
@@ -444,6 +537,9 @@ def health_check() -> tuple[int, str]:
         return EXIT_ENV, f"ERP credential check failed: {e}"
     if not os.path.exists(git_repo_path):
         return EXIT_REPO, f"Repo path not found: {git_repo_path}"
+    st = _read_uploader_status()
+    if int(st.get("consecutive_failures", 0) or 0) >= MAX_CONSECUTIVE_FAILURES:
+        return EXIT_CIRCUIT_OPEN, f"Circuit open: consecutive_failures={st.get('consecutive_failures')}"
     try:
         _run(["git", "--version"], cwd=git_repo_path, check=True)
         _run(["git", "remote", "-v"], cwd=git_repo_path, check=True)
@@ -452,10 +548,27 @@ def health_check() -> tuple[int, str]:
     return EXIT_OK, "Health check passed"
 
 
-def upload_to_github(dry_run: bool = False) -> int:
+def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int:
     print(f"\n[JOB START] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
+        got_lock, lock_msg = _acquire_lock()
+        if not got_lock:
+            msg = f"Uploader locked: {lock_msg}"
+            print(f"[WARN] {msg}")
+            _write_uploader_status(False, EXIT_LOCKED, msg)
+            _notify_telegram(f"🚨 업로더 잠금으로 실행 스킵\n{msg}")
+            return EXIT_LOCKED
+
+        prev_status = _read_uploader_status()
+        prev_failures = int(prev_status.get("consecutive_failures", 0) or 0)
+        if prev_failures >= MAX_CONSECUTIVE_FAILURES:
+            msg = f"Circuit open: consecutive_failures={prev_failures}"
+            print(f"[ERROR] {msg}")
+            _write_uploader_status(False, EXIT_CIRCUIT_OPEN, msg)
+            _notify_telegram(f"🚨 업로더 회로차단 발동\n{msg}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
+            return EXIT_CIRCUIT_OPEN
+
         if not os.path.exists(git_repo_path):
             print(f"[ERROR] Repo path not found: {git_repo_path}")
             _write_uploader_status(False, EXIT_REPO, "Repo path not found")
@@ -470,20 +583,28 @@ def upload_to_github(dry_run: bool = False) -> int:
 
         print("[STEP] Syncing with remote repository...")
         try:
-            _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
-            _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
+            if simulate_fail_step == "git":
+                raise RuntimeError("simulated git sync failure")
+            _with_retry("git_sync", lambda: (
+                _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True),
+                _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True),
+            ))
         except Exception as e:
             _write_uploader_status(False, EXIT_GIT_SYNC, f"Git sync failed: {e}")
+            _notify_telegram(f"🚨 업로더 실패(GIT_SYNC)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
             return EXIT_GIT_SYNC
 
         extracted_at = _now_kst()
         meta = {"extracted_at_kst": extracted_at.strftime("%Y-%m-%d %H:%M:%S KST")}
         try:
-            meta.update(download_erp_csv() or {})
+            if simulate_fail_step == "erp":
+                raise RuntimeError("simulated erp failure")
+            meta.update(_with_retry("erp_download", lambda: download_erp_csv()) or {})
         except Exception as e:
             print("[ERROR] ERP download failed.")
             traceback.print_exc()
             _write_uploader_status(False, EXIT_ERP, f"ERP download failed: {e}")
+            _notify_telegram(f"🚨 업로더 실패(ERP)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
             return EXIT_ERP
 
         commit_at = _now_kst()
@@ -507,6 +628,7 @@ def upload_to_github(dry_run: bool = False) -> int:
             _run(["git", "commit", "-m", commit_msg], cwd=git_repo_path, check=True)
         except Exception as e:
             _write_uploader_status(False, EXIT_COMMIT, f"Commit failed: {e}")
+            _notify_telegram(f"🚨 업로더 실패(COMMIT)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
             return EXIT_COMMIT
 
         changed = _run(["git", "show", "--name-only", "--pretty=format:", "HEAD"], cwd=git_repo_path, check=True).stdout
@@ -525,9 +647,18 @@ def upload_to_github(dry_run: bool = False) -> int:
 
         print("[STEP] Pushing to GitHub...")
         try:
-            _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+            if simulate_fail_step == "push":
+                raise RuntimeError("simulated push failure")
+            try:
+                _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+            except Exception:
+                # push 실패 시 1회 안전 재시도
+                _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
+                _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
+                _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
         except Exception as e:
             _write_uploader_status(False, EXIT_PUSH, f"Push failed: {e}")
+            _notify_telegram(f"🚨 업로더 실패(PUSH)\n{e}\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
             return EXIT_PUSH
 
         print(f"[SUCCESS] Completed: {commit_msg}")
@@ -538,7 +669,10 @@ def upload_to_github(dry_run: bool = False) -> int:
         print("[ERROR] Job failed.")
         traceback.print_exc()
         _write_uploader_status(False, EXIT_UNKNOWN, "Unhandled exception")
+        _notify_telegram(f"🚨 업로더 실패(UNKNOWN)\n로그: {os.getenv('UPLOADER_LOG_FILE','')}")
         return EXIT_UNKNOWN
+    finally:
+        _release_lock()
 
 
 # ==========================================
@@ -549,6 +683,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--health-check", action="store_true", help="Validate env/repo/git only and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Run full flow but skip push.")
+    parser.add_argument(
+        "--simulate-fail-step",
+        choices=["", "git", "erp", "push"],
+        default="",
+        help="For validation only: simulate a failure at a specific step.",
+    )
     args = parser.parse_args()
 
     if args.health_check:
@@ -557,5 +697,5 @@ if __name__ == "__main__":
         _write_uploader_status(code == EXIT_OK, code, msg)
         sys.exit(code)
 
-    rc = upload_to_github(dry_run=args.dry_run)
+    rc = upload_to_github(dry_run=args.dry_run, simulate_fail_step=args.simulate_fail_step)
     sys.exit(rc)
