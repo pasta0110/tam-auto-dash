@@ -5,6 +5,7 @@ import streamlit as st
 import config
 import os
 import time
+import requests
 from utils.date_utils import get_current_context
 import data_loader
 from data_processor import process_data
@@ -55,6 +56,34 @@ def _file_sig(path: str):
     except Exception:
         return (None, None)
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _notify_integrity_mismatch_once(commit_at_kst, extracted_at_kst, order_rows, delivery_rows):
+    token = str(st.secrets.get("TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))).strip()
+    chat_id = str(st.secrets.get("TELEGRAM_CHAT_ID", os.getenv("TELEGRAM_CHAT_ID", ""))).strip()
+    if not token or not chat_id:
+        return {"sent": False, "reason": "missing_telegram_secret"}
+    msg = (
+        "⚠️ 무결성 경고\n"
+        "meta-hash 불일치 감지\n"
+        f"ERP 추출: {extracted_at_kst or '-'}\n"
+        f"GitHub 커밋: {commit_at_kst or '-'}\n"
+        f"rows: order={order_rows or '-'}, delivery={delivery_rows or '-'}\n"
+        "조치: 업로더 1회 수동 실행 후 앱 새로고침"
+    )
+    try:
+        resp = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data={"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
+            timeout=10,
+        )
+        ok = resp.status_code == 200
+        return {"sent": ok, "reason": "ok" if ok else f"http_{resp.status_code}"}
+    except Exception as e:
+        return {"sent": False, "reason": f"exception:{e}"}
+
+
+integrity_alert = {}
 parts = []
 hash_ok = None
 if run_meta:
@@ -106,10 +135,11 @@ if parts:
     st.caption("데이터 기준: " + " | ".join(parts))
 
 if hash_ok is False:
-    st.warning(
-        "무결성(meta-hash) 불일치가 감지되었습니다. "
-        "업로더 수동 1회 실행 후 앱 리로드를 권장합니다. "
-        "지속되면 order/delivery/meta 3파일이 같은 커밋에 포함됐는지 확인하세요."
+    integrity_alert = _notify_integrity_mismatch_once(
+        (run_meta or {}).get("commit_at_kst"),
+        (run_meta or {}).get("extracted_at_kst"),
+        (run_meta or {}).get("order_rows"),
+        (run_meta or {}).get("delivery_rows"),
     )
 
 if raw_order_df is not None and raw_delivery_df is not None:
@@ -222,8 +252,14 @@ if raw_order_df is not None and raw_delivery_df is not None:
                         "ana": int(len(ana_df)) if ana_df is not None else 0,
                     },
                     "uploader_status": uploader_status or {},
+                    "integrity_alert": integrity_alert or {},
                 }
             )
+            if hash_ok is False:
+                st.warning(
+                    "무결성(meta-hash) 불일치 상태입니다. "
+                    "일반 사용자 화면에는 숨김 처리되며, 운영자 텔레그램으로만 알림 전송합니다."
+                )
 
 else:
     st.error("데이터를 불러올 수 없습니다. 네트워크 상태를 확인해주세요.")
