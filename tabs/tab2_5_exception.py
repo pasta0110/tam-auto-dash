@@ -6,7 +6,7 @@ from services.exception_ops import build_exception_pack
 
 def render(delivery_df, ctx, cache_key=None):
     st.title("⚠️ 2.5 운영 예외 큐")
-    st.caption("SLA/지연 리스크를 먼저 보고, 오늘 조치할 예외 건을 우선순위로 정렬합니다.")
+    st.caption("활성 주문상태(주문확정/배송준비/배송중) 기준으로, 주문등록일→배송예정일 영업일 계획 대비 지연 리스크를 우선순위화합니다.")
 
     state_key = f"tab2_5_exception::{cache_key}::{ctx.get('m_key')}::{ctx.get('yesterday_str')}"
     if state_key not in st.session_state:
@@ -47,5 +47,5 @@ def render(delivery_df, ctx, cache_key=None):
 
     st.info(
         "권장 운영 액션: "
-        "중대지연(D+3+) 우선 콜백 → 당일 미완료 재배차 → 48시간 위험 물량 선피킹"
+        "중대지연 우선 콜백 → 당일 미완료 재배차 → 48시간 위험 물량 선피킹"
     )

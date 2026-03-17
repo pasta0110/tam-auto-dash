@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from utils.date_utils import get_w_days
 
 
 def _status_col(df: pd.DataFrame) -> str:
@@ -30,6 +31,30 @@ def _month_key(series_dt: pd.Series) -> pd.Series:
     return pd.to_datetime(series_dt, errors="coerce").dt.strftime("%Y-%m")
 
 
+def _active_order_state(df: pd.DataFrame) -> pd.Series:
+    if "주문상태" not in df.columns:
+        return pd.Series([True] * len(df), index=df.index)
+    return _contains(df["주문상태"], "주문확정|배송준비|배송중")
+
+
+def _not_misinstall(df: pd.DataFrame) -> pd.Series:
+    col = _status_col(df)
+    return ~_contains(df[col], "미설치")
+
+
+def _workday_delta(start_dt, end_dt) -> int:
+    try:
+        s = pd.to_datetime(start_dt, errors="coerce")
+        e = pd.to_datetime(end_dt, errors="coerce")
+        if pd.isna(s) or pd.isna(e):
+            return 0
+        if e < s:
+            return 0
+        return int(get_w_days(s.date(), e.date()))
+    except Exception:
+        return 0
+
+
 def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     if delivery_df is None or delivery_df.empty:
         return {"kpi": {}, "queue": pd.DataFrame(), "causes": pd.DataFrame(), "abnormal": pd.DataFrame()}
@@ -41,16 +66,26 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
 
     normal = _is_normal(df)
     done = _is_complete(df)
+    active = _active_order_state(df)
+    not_mis = _not_misinstall(df)
     today = pd.to_datetime(ctx.get("yesterday")).normalize() if ctx.get("yesterday") is not None else pd.Timestamp.today().normalize()
     due = pd.to_datetime(df["배송예정일_DT"], errors="coerce").dt.normalize()
-    overdue_days = (today - due).dt.days
 
-    # SLA proxy KPI (배송예정일까지 상태 완료 여부 기준)
-    due_until_today = normal & (due <= today)
+    if "주문등록일" in df.columns:
+        reg_col = "주문등록일"
+    elif "등록일" in df.columns:
+        reg_col = "등록일"
+    else:
+        reg_col = None
+    reg_dt = pd.to_datetime(df[reg_col], errors="coerce").dt.normalize() if reg_col else pd.to_datetime(df["배송예정일_DT"], errors="coerce").dt.normalize()
+
+    # SLA proxy KPI (활성 주문 기준, 배송예정일까지 상태 완료 여부)
+    scope = normal & active & not_mis
+    due_until_today = scope & (due <= today)
     ontime_done = due_until_today & done
-    overdue = normal & (due < today) & (~done)
-    due_today = normal & (due == today) & (~done)
-    due_tomorrow = normal & (due == (today + pd.Timedelta(days=1))) & (~done)
+    overdue = scope & (due < today) & (~done)
+    due_today = scope & (due == today) & (~done)
+    due_tomorrow = scope & (due == (today + pd.Timedelta(days=1))) & (~done)
 
     denom = int(due_until_today.sum())
     ontime = int(ontime_done.sum())
@@ -69,28 +104,58 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "at_risk_48h": due_today_n + due_tomorrow_n,
     }
 
-    # Exception queue (행동 우선순위)
-    q = df.loc[normal & (~done)].copy()
-    q["지연일수"] = (today - pd.to_datetime(q["배송예정일_DT"]).dt.normalize()).dt.days
+    # Exception queue (행동 우선순위): 활성 주문상태 + 미설치 제외 + 미완료
+    q = df.loc[scope & (~done)].copy()
+    q_due = pd.to_datetime(q["배송예정일_DT"], errors="coerce").dt.normalize()
+    q_reg = pd.to_datetime(q[reg_col], errors="coerce").dt.normalize() if reg_col and reg_col in q.columns else q_due
+    q["지연일수"] = (today - q_due).dt.days
+    q["계획리드타임(영업일)"] = [
+        _workday_delta(s, e) for s, e in zip(q_reg, q_due)
+    ]
+    q["경과영업일(등록→기준일)"] = [
+        _workday_delta(s, today) for s in q_reg
+    ]
+    q["초과영업일"] = q["경과영업일(등록→기준일)"] - q["계획리드타임(영업일)"]
+
     q["리스크구분"] = "D+1 임박"
-    q.loc[q["지연일수"] >= 0, "리스크구분"] = "당일 미완료"
-    q.loc[q["지연일수"] >= 1, "리스크구분"] = "지연(D+1)"
-    q.loc[q["지연일수"] >= 3, "리스크구분"] = "중대지연(D+3+)"
+    q.loc[q["초과영업일"] >= 0, "리스크구분"] = "당일 미완료"
+    q.loc[q["초과영업일"] >= 1, "리스크구분"] = "지연(영업일+1)"
+    q.loc[q["초과영업일"] >= 3, "리스크구분"] = "중대지연(영업일+3)"
     q["리스크점수"] = 40
-    q.loc[q["지연일수"] >= 0, "리스크점수"] = 60
-    q.loc[q["지연일수"] >= 1, "리스크점수"] = 80
-    q.loc[q["지연일수"] >= 3, "리스크점수"] = 100
+    q.loc[q["초과영업일"] >= 0, "리스크점수"] = 60
+    q.loc[q["초과영업일"] >= 1, "리스크점수"] = 80
+    q.loc[q["초과영업일"] >= 3, "리스크점수"] = 100
 
     # 표시 컬럼
     cols = []
-    for c in ["주문번호", "배송예정일_DT", "리스크구분", "리스크점수", "지연일수", "배송상태", "배송사_정제", "수취인", "상품명", "판매인", "담당자"]:
+    for c in [
+        "주문번호",
+        reg_col if reg_col else "등록일",
+        "배송예정일_DT",
+        "계획리드타임(영업일)",
+        "경과영업일(등록→기준일)",
+        "초과영업일",
+        "리스크구분",
+        "리스크점수",
+        "지연일수",
+        "주문상태",
+        "배송상태",
+        "배송사_정제",
+        "수취인",
+        "상품명",
+        "판매인",
+        "담당자",
+    ]:
         if c in q.columns:
             cols.append(c)
     queue = q[cols].copy() if cols else q.copy()
+    if reg_col and reg_col in queue.columns:
+        queue[reg_col] = pd.to_datetime(queue[reg_col], errors="coerce").dt.strftime("%Y-%m-%d")
+        queue = queue.rename(columns={reg_col: "주문등록일"})
     if "배송예정일_DT" in queue.columns:
         queue["배송예정일_DT"] = pd.to_datetime(queue["배송예정일_DT"]).dt.strftime("%Y-%m-%d")
         queue = queue.rename(columns={"배송예정일_DT": "배송예정일"})
-    queue = queue.sort_values(["리스크점수", "지연일수"], ascending=[False, False]).head(300)
+    queue = queue.sort_values(["리스크점수", "초과영업일", "지연일수"], ascending=[False, False, False]).head(300)
 
     # 원인 분포(권역 중심)
     if "배송사_정제" in q.columns and not q.empty:
