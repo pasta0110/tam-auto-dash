@@ -89,9 +89,13 @@ def _load_fixed_snapshot(expected_meta: dict) -> pd.DataFrame | None:
 
 
 def _save_fixed_snapshot(df_fixed_compare: pd.DataFrame, meta: dict) -> None:
-    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    df_fixed_compare.to_pickle(FIXED_COMPARE_PATH)
-    FIXED_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        df_fixed_compare.to_pickle(FIXED_COMPARE_PATH)
+        FIXED_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        # 스냅샷 저장 실패 시에도 기능은 계속 동작해야 함
+        return
 
 
 def build_total_compare_with_snapshot(work_df: pd.DataFrame, run_meta: dict | None = None) -> tuple[pd.DataFrame, list[str]]:

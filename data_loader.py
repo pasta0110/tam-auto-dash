@@ -76,7 +76,7 @@ def get_github_last_commit_time(path: str):
         return None
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_erp_run_meta():
     """
     UI용: ERP 데이터 추출/업로드 시점을 표시하기 위한 메타 정보
@@ -94,7 +94,7 @@ def get_erp_run_meta():
         return {}
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def get_data_snapshot_info():
     """
     UI용: 현재 앱이 보고 있는 CSV의 스냅샷 정보를 반환합니다.

@@ -3,6 +3,7 @@
 
 import streamlit as st
 import config
+import os
 from utils.date_utils import get_current_context
 import data_loader
 from data_processor import process_data
@@ -32,6 +33,20 @@ get_commit_time = getattr(data_loader, "get_github_last_commit_time", lambda _pa
 # 4. 날짜 컨텍스트 확보 (오늘, 어제, 이번 달 등)
 ctx = get_current_context()
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_meta_hash_status(meta_o, meta_d, order_path, delivery_path, order_sig, delivery_sig):
+    return meta_hash_status(meta_o, meta_d, order_path, delivery_path)
+
+
+def _file_sig(path: str):
+    try:
+        if not path or not os.path.exists(path):
+            return (None, None)
+        return (int(os.path.getsize(path)), int(os.path.getmtime(path)))
+    except Exception:
+        return (None, None)
+
 parts = []
 if run_meta:
     extracted = run_meta.get("extracted_at_kst")
@@ -44,7 +59,14 @@ if run_meta:
         parts.append(f"rows: order={run_meta.get('order_rows')}, delivery={run_meta.get('delivery_rows')}")
     meta_o = run_meta.get("order_sha256")
     meta_d = run_meta.get("delivery_sha256")
-    hash_ok = meta_hash_status(meta_o, meta_d, config.ORDER_CSV_PATH, config.DELIVERY_CSV_PATH)
+    hash_ok = _cached_meta_hash_status(
+        meta_o,
+        meta_d,
+        config.ORDER_CSV_PATH,
+        config.DELIVERY_CSV_PATH,
+        _file_sig(config.ORDER_CSV_PATH),
+        _file_sig(config.DELIVERY_CSV_PATH),
+    )
     if hash_ok is True:
         parts.append("무결성: ✅ meta-hash 일치")
     elif hash_ok is False:
@@ -77,38 +99,29 @@ if parts:
 if raw_order_df is not None and raw_delivery_df is not None:
     # 데이터 가공 (컬럼 추가, 필터링 등)
     order_df, delivery_df, ana_df = process_data(raw_order_df, raw_delivery_df)
-    
-    # 5. 메인 UI 구성 (탭)
-    tab1, tab1_5, tab2, tab3, tab4, tab5 = st.tabs([
-        "📋 1. 종합 현황", 
-        "📌 1.5 인사이트",
-        "📈 2. 배송사별 분석", 
-        "🚀 3. 당월 출고 예측", 
-        "🔍 4. 예측 모델 검증", 
-        "📍 5. 배송 지도"
-    ])
-    
-    # 각 탭에 필요한 데이터 전달 및 렌더링
-    with tab1:
-        tab1_summary.render(order_df, delivery_df, ana_df, ctx)
 
-    with tab1_5:
+    # 5. 메인 UI 구성 (선택된 화면만 실행)
+    views = [
+        "📋 1. 종합 현황",
+        "📌 1.5 인사이트",
+        "📈 2. 배송사별 분석",
+        "🚀 3. 당월 출고 예측",
+        "🔍 4. 예측 모델 검증",
+        "📍 5. 배송 지도",
+    ]
+    selected_view = st.radio("메뉴", views, horizontal=True, label_visibility="collapsed", key="main_view")
+
+    if selected_view == views[0]:
+        tab1_summary.render(order_df, delivery_df, ana_df, ctx)
+    elif selected_view == views[1]:
         tab1_5_insights.render(order_df, delivery_df, ctx)
-        
-    with tab2:
-        # Backward-compatible call: supports both old/new tab2 render signatures.
-        try:
-            tab2_delivery.render(ana_df, run_meta=run_meta)
-        except TypeError:
-            tab2_delivery.render(ana_df)
-        
-    with tab3:
+    elif selected_view == views[2]:
+        tab2_delivery.render(ana_df, run_meta=run_meta)
+    elif selected_view == views[3]:
         tab3_prediction.render(ana_df, ctx)
-        
-    with tab4:
+    elif selected_view == views[4]:
         tab4_validation.render(ana_df, ctx)
-        
-    with tab5:
+    else:
         tab5_map.render(ana_df)
 
 else:
