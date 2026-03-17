@@ -8,7 +8,7 @@ import plotly.express as px
 from config import V_ORDER
 from services.prediction_ops import simulate_month_prediction, build_historical_day_trend, build_master_golden_summary
 
-def render(ana_df, ctx):
+def render(ana_df, ctx, cache_key=None):
     st.title("🔍 예측 모델 검증 및 골든 데이 분석")
     st.markdown("전월 데이터를 바탕으로 **'몇 영업일째의 예측이 가장 정확했는지'**를 분석하여 모델의 신뢰도를 검증합니다.")
     
@@ -25,7 +25,10 @@ def render(ana_df, ctx):
         st.info(f"💡 **분석 시나리오:** {sel_month_key}월의 **{sel_day_num}영업일차** 시점 예측치 분석")
         
     # 2. 핵심 시뮬레이션 계산
-    test_df, sim_meta, df_hist = simulate_month_prediction(ana_df, sel_month_key, int(sel_day_num), V_ORDER)
+    sim_state_key = f"tab4_sim::{cache_key}::{sel_month_key}::{int(sel_day_num)}"
+    if sim_state_key not in st.session_state:
+        st.session_state[sim_state_key] = simulate_month_prediction(ana_df, sel_month_key, int(sel_day_num), V_ORDER)
+    test_df, sim_meta, df_hist = st.session_state[sim_state_key]
     target_date = sim_meta.get("target_date")
     sum_actual = sim_meta.get("sum_actual", 0)
 
@@ -77,7 +80,12 @@ def render(ana_df, ctx):
         st.markdown(f"매월 **{sel_day_num}영업일차** 시점의 정확도를 분석합니다. (25년 5월 ~ 전월까지)")
         
         current_month_key = datetime.date.today().strftime('%Y-%m')
-        df_daily = build_historical_day_trend(ana_df, int(sel_day_num), month_from="2025-05", month_to_exclusive=current_month_key)
+        daily_state_key = f"tab4_daytrend::{cache_key}::{int(sel_day_num)}::{current_month_key}"
+        if daily_state_key not in st.session_state:
+            st.session_state[daily_state_key] = build_historical_day_trend(
+                ana_df, int(sel_day_num), month_from="2025-05", month_to_exclusive=current_month_key
+            )
+        df_daily = st.session_state[daily_state_key]
         if not df_daily.empty:
             c_l, c_r = st.columns([1, 2])
             with c_l:
@@ -96,9 +104,12 @@ def render(ana_df, ctx):
         # --- 역대 통합 골든 데이 분석 ---
         st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~전월)")
         st.markdown("전체 기간을 분석하여 **최고 정확도 수준에 가장 먼저 도달하는 가성비 시점**을 도출합니다.")
-        df_master, master_meta = build_master_golden_summary(
-            ana_df, month_from="2025-05", month_to_exclusive=current_month_key, max_day=24
-        )
+        master_state_key = f"tab4_master::{cache_key}::{current_month_key}"
+        if master_state_key not in st.session_state:
+            st.session_state[master_state_key] = build_master_golden_summary(
+                ana_df, month_from="2025-05", month_to_exclusive=current_month_key, max_day=24
+            )
+        df_master, master_meta = st.session_state[master_state_key]
         target_months = master_meta.get("target_months", [])
         if len(target_months) > 0:
             if not df_master.empty:

@@ -4,6 +4,7 @@
 - Confirm `Guardrails` workflow result is green.
 - Confirm Telegram alert arrived for latest main push.
 - Confirm app caption shows current ERP extraction timestamp.
+- If needed, open `?ops=1` query parameter to verify cache source and render timing.
 
 ## 2. If Guardrails Fails
 1. Open GitHub Actions run details.
@@ -33,7 +34,12 @@
    - `cache/processed_meta.json`
 2. Reload app once to rebuild processed cache from current CSV.
 
-## 6. Emergency Rollback
+## 6. Tab5 Slow Response
+1. Tab5 now defaults to **map hidden** mode for faster switching.
+2. Click `지도 렌더링` only when you need map visuals.
+3. Missing coordinates are not auto-geocoded. Run `누락 주소 좌표 보완 실행` only when needed.
+
+## 7. Emergency Rollback
 1. Identify last stable commit hash.
 2. Revert specific bad commit (do not force reset shared branch).
 3. Push revert commit.

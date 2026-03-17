@@ -8,7 +8,7 @@ TAB2_PAGE_KEY = "tab2_p_idx"
 TAB2_CENTER_KEY = "tab2_center"
 
 
-def render(ana_df, run_meta=None):
+def render(ana_df, run_meta=None, cache_key=None):
     st.title("🚛 배송사별 비교 및 추이")
 
     if ana_df is None or ana_df.empty:
@@ -25,7 +25,11 @@ def render(ana_df, run_meta=None):
         st.warning("청호나이스 기준 데이터가 없습니다.")
         return
 
-    total_compare, all_months = build_total_compare_with_snapshot(work_df, run_meta=run_meta)
+    tab2_cache_key = f"tab2_total_compare::{cache_key}"
+    if st.session_state.get("tab2_total_compare_meta") != cache_key or tab2_cache_key not in st.session_state:
+        st.session_state[tab2_cache_key] = build_total_compare_with_snapshot(work_df, run_meta=run_meta)
+        st.session_state["tab2_total_compare_meta"] = cache_key
+    total_compare, all_months = st.session_state[tab2_cache_key]
     total_len = len(all_months)
 
     if total_len > 0:

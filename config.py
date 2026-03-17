@@ -22,6 +22,9 @@ GITHUB_REPO = "tam-auto-dash"
 # (레거시) 원격 엑셀
 DATA_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/data.xlsx"
 
+# 캐시 스키마 버전 (집계/파이프라인 로직 변경 시 버전 증가)
+CACHE_SCHEMA_VERSION = "2026.03.17.v2"
+
 # 2. 지역별 센터 순서 (정렬 기준)
 V_ORDER = ["수도권", "대전", "대구", "부산", "경남", "광주", "전주", "강원"]
 

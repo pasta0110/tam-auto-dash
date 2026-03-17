@@ -5,12 +5,13 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import config
 
 
 SNAPSHOT_DIR = Path("cache")
 PROCESSED_DATA_PATH = SNAPSHOT_DIR / "processed_data.pkl"
 PROCESSED_META_PATH = SNAPSHOT_DIR / "processed_meta.json"
-SCHEMA_VERSION = "processed_v1"
+SCHEMA_VERSION = f"processed_{config.CACHE_SCHEMA_VERSION}"
 
 
 def build_expected_meta(

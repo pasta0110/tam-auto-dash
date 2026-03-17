@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 from services.aggregations import aggregate_month_center_counts
+import config
 
 
 REQUIRED_COLS = {"연월_키", "배송사_정제", "주문유형", "배송상태", "매출처"}
@@ -52,7 +53,7 @@ def _aggregate_month_center(df: pd.DataFrame) -> pd.DataFrame:
 def _expected_fixed_meta(run_meta: dict | None, last_fixed_month: str, fixed_rows: int) -> dict:
     run_meta = run_meta or {}
     return {
-        "schema": "tab2_fixed_v1",
+        "schema": f"tab2_fixed_{config.CACHE_SCHEMA_VERSION}",
         "delivery_sha256": str(run_meta.get("delivery_sha256", "") or ""),
         "order_sha256": str(run_meta.get("order_sha256", "") or ""),
         "last_fixed_month": str(last_fixed_month or ""),

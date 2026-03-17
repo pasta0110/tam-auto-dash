@@ -4,6 +4,7 @@
 import streamlit as st
 import config
 import os
+import time
 from utils.date_utils import get_current_context
 import data_loader
 from data_processor import process_data
@@ -103,6 +104,8 @@ if parts:
     st.caption("데이터 기준: " + " | ".join(parts))
 
 if raw_order_df is not None and raw_delivery_df is not None:
+    perf = {}
+    t0 = time.perf_counter()
     _order_sig = _file_sig(config.ORDER_CSV_PATH)
     _delivery_sig = _file_sig(config.DELIVERY_CSV_PATH)
     _order_sha = (run_meta or {}).get("order_sha256", "")
@@ -113,8 +116,12 @@ if raw_order_df is not None and raw_delivery_df is not None:
         st.session_state["_contract_key"] = _contract_key
         st.session_state["_contract_errors"] = _errors
         st.session_state["_contract_warnings"] = _warnings
+        contract_source = "recomputed"
+    else:
+        contract_source = "session_cache"
     errors = st.session_state.get("_contract_errors", [])
     warnings = st.session_state.get("_contract_warnings", [])
+    perf["contract_validation_sec"] = round(time.perf_counter() - t0, 4)
     if warnings:
         with st.expander(f"데이터 계약 경고 {len(warnings)}건", expanded=False):
             for w in warnings:
@@ -137,19 +144,25 @@ if raw_order_df is not None and raw_delivery_df is not None:
 
     state_key = "_processed_data_meta"
     state_payload = "_processed_data_payload"
-
+    t1 = time.perf_counter()
     if st.session_state.get(state_key) == expected_meta and state_payload in st.session_state:
         payload = st.session_state[state_payload]
+        process_source = "session_cache"
     else:
         payload = load_processed_snapshot(expected_meta)
         if payload is None:
             p_order, p_delivery, p_ana = process_data(raw_order_df, raw_delivery_df)
             payload = {"order_df": p_order, "delivery_df": p_delivery, "ana_df": p_ana}
             save_processed_snapshot(p_order, p_delivery, p_ana, expected_meta)
+            process_source = "fresh_compute"
+        else:
+            process_source = "disk_snapshot"
         st.session_state[state_key] = expected_meta
         st.session_state[state_payload] = payload
+    perf["process_prepare_sec"] = round(time.perf_counter() - t1, 4)
 
     order_df, delivery_df, ana_df = payload["order_df"], payload["delivery_df"], payload["ana_df"]
+    cache_key = f"{expected_meta.get('schema')}|{expected_meta.get('order_sig')}|{expected_meta.get('delivery_sig')}|{expected_meta.get('order_sha256')}|{expected_meta.get('delivery_sha256')}"
 
     # 5. 메인 UI 구성 (선택된 화면만 실행)
     views = [
@@ -162,18 +175,45 @@ if raw_order_df is not None and raw_delivery_df is not None:
     ]
     selected_view = st.radio("메뉴", views, horizontal=True, label_visibility="collapsed", key="main_view")
 
+    t_tab = time.perf_counter()
     if selected_view == views[0]:
         tab1_summary.render(order_df, delivery_df, ana_df, ctx)
     elif selected_view == views[1]:
-        tab1_5_insights.render(order_df, delivery_df, ctx)
+        tab1_5_insights.render(order_df, delivery_df, ctx, cache_key=cache_key)
     elif selected_view == views[2]:
-        tab2_delivery.render(ana_df, run_meta=run_meta)
+        tab2_delivery.render(ana_df, run_meta=run_meta, cache_key=cache_key)
     elif selected_view == views[3]:
-        tab3_prediction.render(ana_df, ctx)
+        tab3_prediction.render(ana_df, ctx, cache_key=cache_key)
     elif selected_view == views[4]:
-        tab4_validation.render(ana_df, ctx)
+        tab4_validation.render(ana_df, ctx, cache_key=cache_key)
     else:
-        tab5_map.render(ana_df)
+        tab5_map.render(ana_df, cache_key=cache_key)
+    perf["selected_tab_render_sec"] = round(time.perf_counter() - t_tab, 4)
+
+    try:
+        q_ops = str(st.query_params.get("ops", "0")) == "1"
+    except Exception:
+        q_ops = False
+    try:
+        secret_ops = bool(st.secrets.get("SHOW_OPS_PANEL", False))
+    except Exception:
+        secret_ops = False
+    if q_ops or secret_ops:
+        with st.expander("⚙️ Ops Panel", expanded=False):
+            st.write(
+                {
+                    "selected_view": selected_view,
+                    "contract_source": contract_source,
+                    "process_source": process_source,
+                    "cache_schema": config.CACHE_SCHEMA_VERSION,
+                    "perf": perf,
+                    "rows": {
+                        "order": int(len(order_df)) if order_df is not None else 0,
+                        "delivery": int(len(delivery_df)) if delivery_df is not None else 0,
+                        "ana": int(len(ana_df)) if ana_df is not None else 0,
+                    },
+                }
+            )
 
 else:
     st.error("데이터를 불러올 수 없습니다. 네트워크 상태를 확인해주세요.")

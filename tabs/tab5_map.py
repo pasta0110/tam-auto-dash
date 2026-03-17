@@ -16,13 +16,6 @@ try:
 except Exception:
     DBSCAN = None
 
-try:
-    import matplotlib  # noqa: F401
-    HAS_MATPLOTLIB = True
-except Exception:
-    HAS_MATPLOTLIB = False
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def _prepare_map_base_cached(src_df: pd.DataFrame, csv_path: str, csv_mtime: float):
     df_map_base = src_df.copy()
@@ -51,7 +44,16 @@ def _build_delay_df_cached(df: pd.DataFrame) -> pd.DataFrame:
     return build_delay_df(df)
 
 
-def render(ana_df):
+@st.cache_data(ttl=300, show_spinner=False)
+def _map_side_summary(df: pd.DataFrame):
+    carrier_counts = df["배송사_정제"].value_counts() if "배송사_정제" in df.columns else pd.Series(dtype="int64")
+    item_counts = df["상품명"].value_counts().reset_index() if "상품명" in df.columns else pd.DataFrame(columns=["상품명", "수량"])
+    if not item_counts.empty:
+        item_counts.columns = ["상품명", "수량"]
+    return carrier_counts, item_counts
+
+
+def render(ana_df, cache_key=None):
     st.title("📍 전국 실시간 배송 밀집도 (AI 분석)")
     st.markdown("브이월드 API와 AI 알고리즘을 활용하여 **배송 속도(영업일 기준), 물류사 분포, 상품별 수요**를 시각적으로 분석합니다.")
 
@@ -115,19 +117,23 @@ def render(ana_df):
                 pass
             return None, None
 
-        # [속도] 3. 병렬 처리
+        # [속도] 기본 렌더에서는 지오코딩 자동 실행을 막고, 필요 시 수동 실행
         new_coords_list = []
+        run_geocode = False
         if len(missing_addrs) > 0:
+            st.info(f"좌표 누락 주소 {len(missing_addrs):,}건이 있습니다. 지도 속도를 위해 자동 변환은 비활성화되어 있습니다.")
+            run_geocode = st.button(f"🌐 누락 주소 좌표 보완 실행 ({len(missing_addrs):,}건)", key="tab5_run_geocode")
+
+        if run_geocode:
             with st.spinner(f'🌐 고속 변환 중... ({len(missing_addrs)}건)'):
                 worker_n = max(1, min(8, len(missing_addrs)))
                 with ThreadPoolExecutor(max_workers=worker_n) as executor:
                     results = list(executor.map(vworld_geocode, missing_addrs))
-                
                 for addr, (lat, lon) in zip(missing_addrs, results):
                     if lat is not None and lon is not None:
                         new_coords_list.append({'search_addr': addr, 'lat': lat, 'lon': lon})
 
-        # 데이터 병합 및 자동 저장
+        # 데이터 병합 및 저장
         if new_coords_list:
             new_coords_df = pd.DataFrame(new_coords_list)
             combined_coords = pd.concat([saved_coords, new_coords_df], ignore_index=True).drop_duplicates(subset=['search_addr'])
@@ -168,9 +174,19 @@ def render(ana_df):
                     final_map_df = final_map_df[final_map_df['상품명'].astype(str) == selected_product]
                     st.info(f"🔎 **{selected_product}** 주문 {len(final_map_df):,}건을 분석합니다.")
 
+            carrier_counts, item_counts = _map_side_summary(final_map_df)
+
+            if "tab5_render_map" not in st.session_state:
+                st.session_state["tab5_render_map"] = False
+            c_btn1, c_btn2, _ = st.columns([1, 1, 3])
+            if c_btn1.button("🗺️ 지도 렌더링", key="tab5_render_on"):
+                st.session_state["tab5_render_map"] = True
+            if c_btn2.button("⏹️ 지도 숨기기", key="tab5_render_off"):
+                st.session_state["tab5_render_map"] = False
+
             # 레이아웃 분할
             col_map, col_stat = st.columns([3, 1])
-            max_points = st.slider("🗺️ 지도 표시 최대 포인트", 1000, 10000, 3500, 500, key="tab5_max_points")
+            max_points = st.slider("🗺️ 지도 표시 최대 포인트", 800, 8000, 2500, 400, key="tab5_max_points")
             map_df = final_map_df if len(final_map_df) <= max_points else final_map_df.sample(max_points, random_state=42)
             if len(final_map_df) > max_points:
                 st.caption(f"성능 최적화를 위해 지도 표시는 {len(final_map_df):,}건 중 {max_points:,}건만 샘플링합니다.")
@@ -205,108 +221,102 @@ def render(ana_df):
                     delay_df_final = delay_df[delay_df['상태'].isin(target_colors)]
 
             with col_map:
-                center_lat = map_df['lat'].mean()
-                center_lon = map_df['lon'].mean()
+                if not st.session_state.get("tab5_render_map", False):
+                    st.info("지도 렌더링이 비활성화되어 있습니다. 우측 통계는 즉시 갱신됩니다.")
+                else:
+                    center_lat = map_df['lat'].mean()
+                    center_lon = map_df['lon'].mean()
 
-                m = folium.Map(
-                    location=[center_lat, center_lon], 
-                    zoom_start=7,
-                    tiles="CartoDB positron",
-                    prefer_canvas=True
-                )
-                
-                if analysis_mode == "🔥 주문 밀집도 (기본)":
-                    heat_data = map_df[['lat', 'lon']].values.tolist()
-                    HeatMap(heat_data, radius=15, blur=10, min_opacity=0.3).add_to(m)
-                    
-                    coords = map_df[['lat', 'lon']].values
-                    if len(coords) > 0 and DBSCAN is not None:
-                        # 대량 포인트에서는 샘플링해서 군집 계산 시간을 줄임
-                        cluster_src = map_df if len(map_df) <= 6000 else map_df.sample(6000, random_state=42)
-                        c_coords = cluster_src[['lat', 'lon']].values
-                        dbscan = DBSCAN(eps=0.05, min_samples=10).fit(c_coords)
-                        cluster_src = cluster_src.copy()
-                        cluster_src['cluster'] = dbscan.labels_
-                        cluster_centers = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')[['lat', 'lon']].mean().reset_index()
-                        cluster_centers['count'] = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')['search_addr'].count().values
-                        
-                        for _, row in cluster_centers.iterrows():
+                    m = folium.Map(
+                        location=[center_lat, center_lon],
+                        zoom_start=7,
+                        tiles="CartoDB positron",
+                        prefer_canvas=True
+                    )
+
+                    if analysis_mode == "🔥 주문 밀집도 (기본)":
+                        heat_data = map_df[['lat', 'lon']].values.tolist()
+                        HeatMap(heat_data, radius=15, blur=10, min_opacity=0.3).add_to(m)
+
+                        coords = map_df[['lat', 'lon']].values
+                        if len(coords) > 0 and DBSCAN is not None:
+                            cluster_src = map_df if len(map_df) <= 4500 else map_df.sample(4500, random_state=42)
+                            c_coords = cluster_src[['lat', 'lon']].values
+                            dbscan = DBSCAN(eps=0.05, min_samples=10).fit(c_coords)
+                            cluster_src = cluster_src.copy()
+                            cluster_src['cluster'] = dbscan.labels_
+                            cluster_centers = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')[['lat', 'lon']].mean().reset_index()
+                            cluster_centers['count'] = cluster_src[cluster_src['cluster'] != -1].groupby('cluster')['search_addr'].count().values
+
+                            for _, row in cluster_centers.iterrows():
+                                folium.Marker(
+                                    location=[row['lat'], row['lon']],
+                                    popup=folium.Popup(f"<b>⭐ 거점 C{int(row['cluster'])}</b><br>물량: {int(row['count'])}건", max_width=200),
+                                    icon=folium.Icon(color='red', icon='star', prefix='fa')
+                                ).add_to(m)
+                        elif len(coords) > 0 and DBSCAN is None:
+                            st.caption("참고: sklearn 미설치로 군집 거점 표시는 생략됩니다.")
+
+                    elif analysis_mode == "🚚 배송 소요시간 분석":
+                        non_red_df = delay_df_final[delay_df_final['상태'] != 'red']
+                        if not non_red_df.empty:
+                            FastMarkerCluster(data=non_red_df[['lat', 'lon']].values.tolist()).add_to(m)
+
+                        red_df = delay_df_final[delay_df_final['상태'] == 'red']
+                        if len(red_df) > 800:
+                            red_df = red_df.sort_values("영업배송일수", ascending=False).head(800)
+                            st.caption("성능 최적화를 위해 지연 마커는 상위 800건만 표시합니다.")
+                        marker_cluster = MarkerCluster().add_to(m)
+
+                        for _, row in red_df.iterrows():
+                            name = row.get('수령인', row.get('성명', '고객'))
+                            msg = row.get('배송메세지', row.get('배송메모', '-'))
+                            masked_name = mask_name(name)
+                            masked_addr = mask_addr(row.get('주소', row.get('search_addr', '')))
+
+                            popup_html = f"""
+                            <div style="width:250px; font-size:13px;">
+                                <b style="color:red;">🔴 배송 지연 ({int(row['영업배송일수'])}일 소요)</b><br>
+                                <hr style="margin:5px 0;">
+                                <b>고객명:</b> {masked_name}<br>
+                                <b>주소:</b> {masked_addr}<br>
+                                <b>상품:</b> {row['상품명']}<br>
+                                <b>배송사:</b> {row['배송사_정제']}<br>
+                                <b>메세지:</b> {msg}
+                            </div>
+                            """
+
                             folium.Marker(
                                 location=[row['lat'], row['lon']],
-                                popup=folium.Popup(f"<b>⭐ 거점 C{int(row['cluster'])}</b><br>물량: {int(row['count'])}건", max_width=200),
-                                icon=folium.Icon(color='red', icon='star', prefix='fa')
+                                popup=folium.Popup(popup_html, max_width=300),
+                                icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')
+                            ).add_to(marker_cluster)
+
+                    elif analysis_mode == "🏢 배송사별 분포":
+                        unique_carriers = map_df['배송사_정제'].unique()
+                        colors = ['blue', 'green', 'red', 'purple', 'orange', 'darkblue', 'darkgreen', 'cadetblue']
+                        carrier_colors = {carrier: colors[i % len(colors)] for i, carrier in enumerate(unique_carriers)}
+
+                        plot_df = map_df if len(map_df) <= 2500 else map_df.sample(2500, random_state=42)
+                        for _, row in plot_df.iterrows():
+                            carrier = row['배송사_정제']
+                            color = carrier_colors.get(carrier, 'gray')
+                            folium.CircleMarker(
+                                location=[row['lat'], row['lon']],
+                                radius=5, color=color, fill=True, fill_opacity=0.7, popup=f"배송사: {carrier}"
                             ).add_to(m)
-                    elif len(coords) > 0 and DBSCAN is None:
-                        st.caption("참고: sklearn 미설치로 군집 거점 표시는 생략됩니다.")
 
-                elif analysis_mode == "🚚 배송 소요시간 분석":
-                    # 마커 클러스터링 사용 (개별 점 클릭 가능하도록)
-                    # 빨간색은 눈에 띄게 별도 처리, 나머지는 클러스터링으로 성능 확보
-                    
-                    # 1. 정상/주의 (Green/Orange) -> FastMarkerCluster 또는 CircleMarker (가볍게)
-                    non_red_df = delay_df_final[delay_df_final['상태'] != 'red']
-                    if not non_red_df.empty:
-                        # 비적색은 클러스터로 렌더링해 성능 확보
-                        FastMarkerCluster(data=non_red_df[['lat', 'lon']].values.tolist()).add_to(m)
-                        
-                    # 2. 지연 (Red) -> MarkerCluster (상세 정보 팝업)
-                    red_df = delay_df_final[delay_df_final['상태'] == 'red']
-                    if len(red_df) > 1200:
-                        red_df = red_df.sort_values("영업배송일수", ascending=False).head(1200)
-                        st.caption("성능 최적화를 위해 지연 마커는 상위 1,200건만 표시합니다.")
-                    marker_cluster = MarkerCluster().add_to(m)
-                    
-                    for _, row in red_df.iterrows():
-                        # 고객 정보 등 상세 팝업 구성
-                        name = row.get('수령인', row.get('성명', '고객'))
-                        msg = row.get('배송메세지', row.get('배송메모', '-'))
-                        masked_name = mask_name(name)
-                        masked_addr = mask_addr(row.get('주소', row.get('search_addr', '')))
+                        legend_html = '<div style="position: fixed; bottom: 50px; left: 50px; z-index:9999; font-size:14px; background-color:white; opacity:0.8; padding: 10px; border:2px solid grey;">'
+                        for carrier, color in carrier_colors.items():
+                            legend_html += f'&nbsp; <span style="color:{color}">●</span> {carrier} <br>'
+                        legend_html += '</div>'
+                        m.get_root().html.add_child(folium.Element(legend_html))
 
-                        popup_html = f"""
-                        <div style="width:250px; font-size:13px;">
-                            <b style="color:red;">🔴 배송 지연 ({int(row['영업배송일수'])}일 소요)</b><br>
-                            <hr style="margin:5px 0;">
-                            <b>고객명:</b> {masked_name}<br>
-                            <b>주소:</b> {masked_addr}<br>
-                            <b>상품:</b> {row['상품명']}<br>
-                            <b>배송사:</b> {row['배송사_정제']}<br>
-                            <b>메세지:</b> {msg}
-                        </div>
-                        """
-                        
-                        folium.Marker(
-                            location=[row['lat'], row['lon']],
-                            popup=folium.Popup(popup_html, max_width=300),
-                            icon=folium.Icon(color='red', icon='exclamation-triangle', prefix='fa')
-                        ).add_to(marker_cluster)
+                    elif analysis_mode == "📦 상품별 수요 분석":
+                        marker_cluster = FastMarkerCluster(data=map_df[['lat', 'lon']].values.tolist())
+                        marker_cluster.add_to(m)
 
-                elif analysis_mode == "🏢 배송사별 분포":
-                    unique_carriers = map_df['배송사_정제'].unique()
-                    colors = ['blue', 'green', 'red', 'purple', 'orange', 'darkblue', 'darkgreen', 'cadetblue']
-                    carrier_colors = {carrier: colors[i % len(colors)] for i, carrier in enumerate(unique_carriers)}
-                    
-                    # 대량 데이터면 샘플링해서 지도 렌더링 병목 완화
-                    plot_df = map_df if len(map_df) <= 6000 else map_df.sample(6000, random_state=42)
-                    for _, row in plot_df.iterrows():
-                        carrier = row['배송사_정제']
-                        color = carrier_colors.get(carrier, 'gray')
-                        folium.CircleMarker(
-                            location=[row['lat'], row['lon']],
-                            radius=5, color=color, fill=True, fill_opacity=0.7, popup=f"배송사: {carrier}"
-                        ).add_to(m)
-                        
-                    legend_html = '<div style="position: fixed; bottom: 50px; left: 50px; z-index:9999; font-size:14px; background-color:white; opacity:0.8; padding: 10px; border:2px solid grey;">'
-                    for carrier, color in carrier_colors.items():
-                        legend_html += f'&nbsp; <span style="color:{color}">●</span> {carrier} <br>'
-                    legend_html += '</div>'
-                    m.get_root().html.add_child(folium.Element(legend_html))
-
-                elif analysis_mode == "📦 상품별 수요 분석":
-                    marker_cluster = FastMarkerCluster(data=map_df[['lat', 'lon']].values.tolist())
-                    marker_cluster.add_to(m)
-                
-                folium_static(m, width=900, height=600)
+                    folium_static(m, width=900, height=600)
             
             with col_stat:
                 st.subheader(f"📊 {analysis_mode}")
@@ -321,17 +331,11 @@ def render(ana_df):
                         st.info("표시할 데이터가 없습니다.")
 
                 elif analysis_mode == "🏢 배송사별 분포":
-                    carrier_counts = final_map_df['배송사_정제'].value_counts()
                     st.write("**배송사 점유율**")
                     st.bar_chart(carrier_counts)
                     
                 else:
-                    item_counts = final_map_df['상품명'].value_counts().reset_index()
-                    item_counts.columns = ['상품명', '수량']
-                    if HAS_MATPLOTLIB:
-                        st.dataframe(item_counts.style.background_gradient(cmap="Reds"), height=400, hide_index=True)
-                    else:
-                        st.dataframe(item_counts, height=400, hide_index=True)
+                    st.dataframe(item_counts, height=400, hide_index=True)
             
             # [기능 추가] 지연 상세 리스트 (지도 아래 배치)
             if analysis_mode == "🚚 배송 소요시간 분석":

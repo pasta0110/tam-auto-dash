@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+from services.analytics_pack import build_tab1_5_pack
 from services.aggregations import (
     add_seller_branch_label,
     build_issue_spike_view,
@@ -12,14 +13,12 @@ from .metrics import (
     month_key,
     show_table,
     kpi_table,
-    build_order_month_summary,
     build_event_seller_summary,
-    build_r14_summary,
 )
 from .risk import valid_bucket_df, rank_cancel, rank_return, build_risk_top
 
 
-def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
+def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict, cache_key=None):
     st.subheader("📌 1.5 인사이트")
     st.markdown(
         """
@@ -37,7 +36,14 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
         st.info("데이터가 없어 KPI를 표시할 수 없습니다.")
         return
 
-    kpi_df = kpi_table(delivery_df)
+    pack_state_key = f"tab1_5_pack::{cache_key}"
+    pack_meta = st.session_state.get("tab1_5_pack_meta")
+    if pack_meta != cache_key or pack_state_key not in st.session_state:
+        st.session_state[pack_state_key] = build_tab1_5_pack(order_df, delivery_df)
+        st.session_state["tab1_5_pack_meta"] = cache_key
+    pack = st.session_state[pack_state_key]
+
+    kpi_df = pack.get("kpi_df", pd.DataFrame())
     if kpi_df.empty:
         st.info("KPI 계산에 필요한 날짜 컬럼(배송예정일)을 찾지 못했습니다.")
         return
@@ -112,7 +118,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 else:
                     show_table(view, int_cols=["증가", "총이슈(이번달)", "총이슈(전월)", "AS(이번달)", "교환(이번달)", "AS(전월)", "교환(전월)"])
 
-    om_all = build_order_month_summary(order_df, delivery_df)
+    om_all = pack.get("om_all", pd.DataFrame())
     om_m = om_all[om_all.get("연월_키", "") == sel_month].copy() if not om_all.empty else pd.DataFrame()
 
     with st.expander("3) 취소 TOP 판매지국/판매인 (최종기준 vs 이벤트기준)", expanded=True):
@@ -142,7 +148,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     show_table(view.head(20), percent_cols=["취소율(%)"], int_cols=["전체", "정상", "취소"])
 
             st.markdown("**이벤트 기준(원데이터 관점) 판매인 TOP**")
-            event_rank = build_event_seller_summary(order_df, delivery_df, sel_month)
+            month_cache_key = f"tab1_5_event_rank::{cache_key}::{sel_month}"
+            if month_cache_key not in st.session_state:
+                st.session_state[month_cache_key] = build_event_seller_summary(order_df, delivery_df, sel_month)
+            event_rank = st.session_state[month_cache_key]
             if event_rank.empty:
                 st.info("이벤트 기준 집계에 필요한 데이터가 없습니다.")
             else:
@@ -177,7 +186,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     show_table(view.head(20), percent_cols=["반품율(%)"], int_cols=["전체", "정상", "반품"])
 
     with st.expander("5) R14(14일내 반품) 악성 패턴 탐지", expanded=True):
-        r14 = build_r14_summary(order_df, delivery_df)
+        r14 = pack.get("r14", pd.DataFrame())
         if r14.empty:
             st.info("R14 계산에 필요한 완료/반품 데이터가 없습니다.")
         else:

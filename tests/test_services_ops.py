@@ -6,6 +6,7 @@ import pandas as pd
 from services.aggregations import aggregate_month_center_counts
 from services.data_contract import validate_raw_inputs
 from services.prediction_ops import build_tab3_prediction
+from services.pipeline_cache import build_expected_meta
 
 
 class ServiceOpsTests(unittest.TestCase):
@@ -55,7 +56,14 @@ class ServiceOpsTests(unittest.TestCase):
         self.assertIn("remain_w", meta)
         self.assertEqual(rows[-1]["배송사"], "📌 합계")
 
+    def test_pipeline_meta_schema(self):
+        meta = build_expected_meta((100, 200), (300, 400), "oa", "da")
+        self.assertIn("schema", meta)
+        self.assertEqual(meta["order_sig"], [100, 200])
+        self.assertEqual(meta["delivery_sig"], [300, 400])
+        self.assertEqual(meta["order_sha256"], "oa")
+        self.assertEqual(meta["delivery_sha256"], "da")
+
 
 if __name__ == "__main__":
     unittest.main()
-
