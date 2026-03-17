@@ -8,6 +8,7 @@ import plotly.express as px
 from datetime import timedelta
 from utils.date_utils import get_w_days
 from config import V_ORDER
+from services.prediction_ops import simulate_month_prediction
 
 def render(ana_df, ctx):
     st.title("🔍 예측 모델 검증 및 골든 데이 분석")
@@ -25,118 +26,31 @@ def render(ana_df, ctx):
     with c3:
         st.info(f"💡 **분석 시나리오:** {sel_month_key}월의 **{sel_day_num}영업일차** 시점 예측치 분석")
         
-    # 2. 날짜 및 기초 데이터 설정
-    sel_year, sel_month = map(int, sel_month_key.split('-'))
-    sim_m_start = datetime.date(sel_year, sel_month, 1)
-    
-    if sel_month == 12:
-        sim_m_end = datetime.date(sel_year, 12, 31)
-    else:
-        sim_m_end = datetime.date(sel_year, sel_month + 1, 1) - timedelta(days=1)
-        
-    s_total_w = get_w_days(sim_m_start, sim_m_end)
-    s_real_final = ana_df[ana_df['연월_키'] == sel_month_key]
-    sum_actual = len(s_real_final)
-    
-    # 3. 선택한 영업일 날짜 찾기
-    month_days = pd.date_range(sim_m_start, sim_m_end)
-    target_date = None
-    w_count = 0
-    
-    for d in month_days:
-        if get_w_days(d.date(), d.date()) > 0:
-            w_count += 1
-            if w_count == sel_day_num:
-                target_date = d.date()
-                break
-                
+    # 2. 핵심 시뮬레이션 계산
+    test_df, sim_meta, df_hist = simulate_month_prediction(ana_df, sel_month_key, int(sel_day_num), V_ORDER)
+    target_date = sim_meta.get("target_date")
+    sum_actual = sim_meta.get("sum_actual", 0)
+
     if target_date:
-        s_act_data = ana_df[(ana_df['배송예정일_DT'].dt.date >= sim_m_start) & (ana_df['배송예정일_DT'].dt.date <= target_date)]
-        s_30_start = target_date - timedelta(days=30)
-        s_recent_30d = ana_df[(ana_df['배송예정일_DT'].dt.date >= s_30_start) & (ana_df['배송예정일_DT'].dt.date <= target_date)]
-        
-        s_recent_w = get_w_days(s_30_start, target_date)
-        s_remain_w = s_total_w - sel_day_num
-        
-        test_rows = []
-        sum_curr, sum_recent_cnt, sum_pred_rem, sum_final_pred = 0, 0, 0, 0
-        
-        for v in V_ORDER:
-            if v in ana_df['배송사_정제'].unique():
-                v_curr = len(s_act_data[s_act_data['배송사_정제'] == v])
-                v_recent = len(s_recent_30d[s_recent_30d['배송사_정제'] == v])
-                
-                v_pace = v_recent / s_recent_w if s_recent_w > 0 else 0
-                v_rem_pred = int(v_pace * s_remain_w)
-                v_final_pred = v_curr + v_rem_pred
-                v_actual = len(s_real_final[s_real_final['배송사_정제'] == v])
-                
-                v_acc = (1 - abs((v_actual - v_final_pred)/v_actual)) * 100 if v_actual > 0 else 0
-                
-                sum_curr += v_curr
-                sum_recent_cnt += v_recent
-                sum_pred_rem += v_rem_pred
-                sum_final_pred += v_final_pred
-                
-                test_rows.append({
-                    '지역센터': v,
-                    '당시 실적': f"{v_curr}건",
-                    '일평균 페이스': f"{v_pace:.1f}건/일",
-                    '예측 최종': f"{v_final_pred}건",
-                    '실제 결과': f"{v_actual}건",
-                    '정확도': f"{v_acc:.1f}%"
-                })
-                
-        total_acc = (1 - abs((sum_actual - sum_final_pred)/sum_actual)) * 100 if sum_actual > 0 else 0
-        
-        test_rows.append({
-            '지역센터': '📌 합계',
-            '당시 실적': f"{sum_curr}건",
-            '일평균 페이스': '-',
-            '예측 최종': f"{sum_final_pred}건",
-            '실제 결과': f"{sum_actual}건",
-            '정확도': f"{total_acc:.1f}%"
-        })
-        
         st.subheader(f"📍 {sel_day_num}영업일차({target_date.strftime('%m/%d')}) 예측 결과")
-        st.table(pd.DataFrame(test_rows).set_index('지역센터'))
+        st.table(test_df.set_index('지역센터'))
         st.divider()
         
         # 4. 골든 데이 분석
         st.subheader(f"🏆 {sel_month_key} 예측 골든 데이 분석 (1~24 영업일)")
         
-        acc_history = []
         best_acc = -1
         best_day_info = {}
         target_accuracy = 95.0
         fastest_golden_day = None
-        
-        temp_w_count = 0
-        
-        for d in month_days:
-            if get_w_days(d.date(), d.date()) == 0: continue
-            temp_w_count += 1
-            if temp_w_count > 24: break
-            
-            d_date = d.date()
-            d_act = len(ana_df[(ana_df['연월_키'] == sel_month_key) & (ana_df['배송예정일_DT'].dt.date <= d_date)])
-            
-            d_30_s = d_date - timedelta(days=30)
-            d_30_data = ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= d_date)]
-            d_30_w = get_w_days(d_30_s, d_date)
-            
-            d_pace = len(d_30_data) / d_30_w if d_30_w > 0 else 0
-            d_pred = d_act + int(d_pace * (s_total_w - temp_w_count))
-            d_acc = (1 - abs((sum_actual - d_pred)/sum_actual)) * 100 if sum_actual > 0 else 0
-            
-            acc_history.append({"영업일": f"{temp_w_count}일차", "날짜": d_date.strftime('%m/%d'), "정확도": d_acc})
-            
+        for _, row_hist in df_hist.iterrows():
+            d_acc = float(row_hist["정확도"])
+            day_num = int(str(row_hist["영업일"]).replace("일차", ""))
             if d_acc >= target_accuracy and fastest_golden_day is None:
-                fastest_golden_day = {"day": temp_w_count, "date": d_date.strftime('%m/%d'), "acc": d_acc}
-            
+                fastest_golden_day = {"day": day_num, "date": row_hist["날짜"], "acc": d_acc}
             if d_acc > best_acc:
                 best_acc = d_acc
-                best_day_info = {"day": temp_w_count, "date": d_date.strftime('%m/%d'), "acc": d_acc}
+                best_day_info = {"day": day_num, "date": row_hist["날짜"], "acc": d_acc}
                 
         display_day = fastest_golden_day if fastest_golden_day else best_day_info
         
@@ -148,7 +62,6 @@ def render(ana_df, ctx):
                 if fastest_golden_day:
                     st.caption(f"✅ 정확도 {target_accuracy}%를 달성한 최초의 날입니다.")
             with m2:
-                df_hist = pd.DataFrame(acc_history)
                 fig_hist = px.bar(
                     df_hist, x='영업일', y='정확도', 
                     text=df_hist['정확도'].apply(lambda x: f"{x:.1f}%"), 
