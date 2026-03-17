@@ -3,10 +3,7 @@
 
 import os
 import streamlit as st
-import pandas as pd
 import requests
-import json
-from io import BytesIO
 from config import (
     ORDER_CSV_PATH,
     DELIVERY_CSV_PATH,
@@ -17,12 +14,17 @@ from config import (
     UPLOADER_STATUS_PATH,
     UPLOADER_STATUS_URL,
 )
+from services.data_sources import RepositoryDataSource
 
 try:
     from config import GITHUB_OWNER, GITHUB_REPO
 except Exception:
     GITHUB_OWNER = "pasta0110"
     GITHUB_REPO = "tam-auto-dash"
+
+
+def _get_source() -> RepositoryDataSource:
+    return RepositoryDataSource()
 
 def _format_dt_kst(dt):
     try:
@@ -38,10 +40,7 @@ def _format_dt_kst(dt):
 
 def _http_last_modified(url: str):
     try:
-        r = requests.head(url, timeout=10, allow_redirects=True)
-        lm = r.headers.get("Last-Modified")
-        etag = r.headers.get("ETag")
-        return {"last_modified": lm, "etag": etag}
+        return _get_source().remote.head_meta(url)
     except Exception:
         return {"last_modified": None, "etag": None}
 
@@ -65,13 +64,9 @@ def get_github_last_commit_time(path: str):
     ERP 메타 파일이 없을 때(업로더 미실행) 최소한 'GitHub에 언제 올라갔는지'는 확인 가능.
     """
     try:
-        api = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/commits"
-        r = requests.get(api, params={"path": path, "per_page": 1}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if not data:
+        iso = _get_source().remote.github_last_commit_time(GITHUB_OWNER, GITHUB_REPO, path)
+        if not iso:
             return None
-        iso = data[0]["commit"]["committer"]["date"]
         return _parse_github_iso_to_kst(iso)
     except Exception:
         return None
@@ -85,12 +80,9 @@ def get_erp_run_meta():
     - 아니면 GitHub raw JSON
     """
     try:
-        if os.path.exists(ERP_RUN_META_PATH):
-            with open(ERP_RUN_META_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        resp = requests.get(ERP_RUN_META_URL, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        source = _get_source()
+        payload, _ = source.load_json_prefer_local(ERP_RUN_META_PATH, ERP_RUN_META_URL)
+        return payload
     except Exception:
         return {}
 
@@ -103,12 +95,9 @@ def get_uploader_status():
     - 없으면 GitHub raw JSON
     """
     try:
-        if os.path.exists(UPLOADER_STATUS_PATH):
-            with open(UPLOADER_STATUS_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        resp = requests.get(UPLOADER_STATUS_URL, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        source = _get_source()
+        payload, _ = source.load_json_prefer_local(UPLOADER_STATUS_PATH, UPLOADER_STATUS_URL)
+        return payload
     except Exception:
         return {}
 
@@ -122,13 +111,15 @@ def get_data_snapshot_info():
     """
     info = {}
 
+    source = _get_source()
+
     if os.path.exists(ORDER_CSV_PATH):
         info["order_source"] = "local"
         info["order_path_or_url"] = ORDER_CSV_PATH
         try:
             import datetime
 
-            dt = datetime.datetime.fromtimestamp(os.path.getmtime(ORDER_CSV_PATH))
+            dt = datetime.datetime.fromtimestamp(source.local.mtime(ORDER_CSV_PATH))
             info["order_mtime_kst"] = _format_dt_kst(dt)
         except Exception:
             info["order_mtime_kst"] = None
@@ -145,7 +136,7 @@ def get_data_snapshot_info():
         try:
             import datetime
 
-            dt = datetime.datetime.fromtimestamp(os.path.getmtime(DELIVERY_CSV_PATH))
+            dt = datetime.datetime.fromtimestamp(source.local.mtime(DELIVERY_CSV_PATH))
             info["delivery_mtime_kst"] = _format_dt_kst(dt)
         except Exception:
             info["delivery_mtime_kst"] = None
@@ -165,32 +156,8 @@ def load_raw_data():
     로컬 CSV 우선 로드, 없으면 원격 CSV 로드 (캐싱 적용: 5분)
     """
     try:
-        ord_df = None
-        del_df = None
+        ord_df, del_df = load_raw_data_with_source(_get_source())
 
-        try:
-            if os.path.exists(ORDER_CSV_PATH):
-                ord_df = pd.read_csv(ORDER_CSV_PATH, encoding="utf-8-sig", low_memory=False)
-            else:
-                resp = requests.get(ORDER_CSV_URL, timeout=20)
-                resp.raise_for_status()
-                ord_df = pd.read_csv(BytesIO(resp.content), encoding="utf-8-sig", low_memory=False)
-        except Exception:
-            ord_df = None
-
-        try:
-            if os.path.exists(DELIVERY_CSV_PATH):
-                del_df = pd.read_csv(DELIVERY_CSV_PATH, encoding="utf-8-sig", low_memory=False)
-            else:
-                resp = requests.get(DELIVERY_CSV_URL, timeout=20)
-                resp.raise_for_status()
-                del_df = pd.read_csv(BytesIO(resp.content), encoding="utf-8-sig", low_memory=False)
-        except Exception:
-            del_df = None
-
-        if ord_df is None or del_df is None:
-            raise RuntimeError("order.csv 또는 delivery.csv 로드에 실패했습니다.")
-             
         # 컬럼명 공백 제거
         ord_df.columns = [str(c).strip() for c in ord_df.columns]
         del_df.columns = [str(c).strip() for c in del_df.columns]
@@ -200,3 +167,11 @@ def load_raw_data():
     except Exception as e:
         st.error(f"⚠️ 데이터 로딩 실패: {e}")
         return None, None
+
+
+def load_raw_data_with_source(source: RepositoryDataSource):
+    ord_df, _ = source.load_csv_prefer_local(ORDER_CSV_PATH, ORDER_CSV_URL)
+    del_df, _ = source.load_csv_prefer_local(DELIVERY_CSV_PATH, DELIVERY_CSV_URL)
+    if ord_df is None or del_df is None:
+        raise RuntimeError("order.csv 또는 delivery.csv 로드에 실패했습니다.")
+    return ord_df, del_df

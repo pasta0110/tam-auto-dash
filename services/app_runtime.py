@@ -1,9 +1,9 @@
 import os
-import requests
 import streamlit as st
 
 import config
 from services.integrity import meta_hash_status
+from services.notifiers import build_telegram_notifier
 from services.order_window import order_month_coverage
 
 
@@ -25,6 +25,7 @@ def cached_meta_hash_status(meta_o, meta_d, order_path, delivery_path, order_sig
 def notify_integrity_mismatch_once(commit_at_kst, extracted_at_kst, order_rows, delivery_rows):
     token = str(st.secrets.get("TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_BOT_TOKEN", ""))).strip()
     chat_id = str(st.secrets.get("TELEGRAM_CHAT_ID", os.getenv("TELEGRAM_CHAT_ID", ""))).strip()
+    notifier = build_telegram_notifier(token, chat_id)
     if not token or not chat_id:
         return {"sent": False, "reason": "missing_telegram_secret"}
     msg = (
@@ -35,16 +36,8 @@ def notify_integrity_mismatch_once(commit_at_kst, extracted_at_kst, order_rows, 
         f"rows: order={order_rows or '-'}, delivery={delivery_rows or '-'}\n"
         "조치: 업로더 1회 수동 실행 후 앱 새로고침"
     )
-    try:
-        resp = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": msg, "disable_web_page_preview": True},
-            timeout=10,
-        )
-        ok = resp.status_code == 200
-        return {"sent": ok, "reason": "ok" if ok else f"http_{resp.status_code}"}
-    except Exception as e:
-        return {"sent": False, "reason": f"exception:{e}"}
+    ok = notifier.send(msg)
+    return {"sent": bool(ok), "reason": "ok" if ok else "send_failed"}
 
 
 def build_caption_parts(run_meta: dict, snapshot: dict, raw_order_df, get_commit_time):

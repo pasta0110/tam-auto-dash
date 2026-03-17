@@ -25,7 +25,8 @@ jobs:
       - name: Compile checks
         run: |
           python -m py_compile app.py data_loader.py data_processor.py ch_NEW_smart_uploader.py
-          python -m py_compile services/data_contract.py services/aggregations.py services/prediction_ops.py services/map_ops.py services/tab1_summary_ops.py services/analytics_pack.py services/pipeline_cache.py
+          python -m py_compile services/data_contract.py services/aggregations.py services/prediction_ops.py services/map_ops.py services/tab1_summary_ops.py services/analytics_pack.py services/pipeline_cache.py services/app_runtime.py services/app_contract.py services/app_processed.py services/app_ops.py services/data_sources.py services/notifiers.py
+          python -m py_compile uploader/runtime.py uploader/credentials.py uploader/state_store.py uploader/git_ops.py uploader/notifier.py
           python -m py_compile tools/reliability_guard.py tools/perf_guard.py tools/uploader_watchdog.py
           python -m py_compile tabs/tab1_summary.py tabs/tab1_5/views.py tabs/tab2/views.py tabs/tab3_prediction.py tabs/tab4_validation.py tabs/tab5_map.py
 
