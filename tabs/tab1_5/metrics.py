@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import streamlit as st
 from services.domain_rules import cheongho_mask, filter_cheongho, delivery_event_flags
 
@@ -39,13 +40,13 @@ def seller_branch_map_from_order(order_df: pd.DataFrame) -> pd.DataFrame:
         if c not in cols:
             o[c] = ""
             cols.append(c)
-    return (
-        o[cols]
-        .dropna(subset=["주문번호"])
-        .groupby("주문번호", dropna=False)[["판매인", "판매지국"]]
-        .agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "")
-        .reset_index()
-    )
+    s = o[cols].dropna(subset=["주문번호"]).copy()
+    for c in ["판매인", "판매지국"]:
+        s[c] = s[c].replace("", pd.NA)
+    out = s.groupby("주문번호", dropna=False)[["판매인", "판매지국"]].first().reset_index()
+    out["판매인"] = out["판매인"].fillna("")
+    out["판매지국"] = out["판매지국"].fillna("")
+    return out
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -130,19 +131,17 @@ def build_r14_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame) -> pd.D
     normal_complete = flags["is_normal_complete"] & d["배송예정일_DT"].notna()
     is_return = flags["is_return"]
 
-    comp = d[normal_complete].copy()
+    comp = d.loc[normal_complete, ["주문번호", "배송예정일_DT", "판매인", "판매지국"]].copy()
     if comp.empty:
         return pd.DataFrame()
-    comp = comp.sort_values("배송예정일_DT")
+    comp = comp.sort_values(["주문번호", "배송예정일_DT"])
     comp_first = (
         comp.groupby("주문번호", dropna=False)
-        .agg(
-            정상완료일=("배송예정일_DT", "min"),
-            판매인=("판매인", lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else ""),
-            판매지국=("판매지국", lambda x: x.dropna().astype(str).iloc[0] if len(x.dropna()) else ""),
-        )
+        .agg(정상완료일=("배송예정일_DT", "min"), 판매인=("판매인", "first"), 판매지국=("판매지국", "first"))
         .reset_index()
     )
+    comp_first["판매인"] = comp_first["판매인"].fillna("")
+    comp_first["판매지국"] = comp_first["판매지국"].fillna("")
     comp_first["코호트월"] = comp_first["정상완료일"].dt.strftime("%Y-%m")
 
     ret = d[is_return & d["등록일_DT"].notna()].copy()
@@ -191,35 +190,37 @@ def build_order_month_summary(order_df: pd.DataFrame, delivery_df: pd.DataFrame)
         .rename(columns={"_cancel": "취소발생", "_exchange": "교환발생", "_as": "AS발생", "_return": "반품발생", "_normal": "정상(상세)"})
     )
 
-    def _final(row) -> str:
-        if int(row.get("반품발생", 0)) > 0:
-            return "반품"
-        if int(row.get("교환발생", 0)) > 0:
-            return "교환"
-        if int(row.get("AS발생", 0)) > 0:
-            return "AS"
-        if int(row.get("정상(상세)", 0)) > 0:
-            return "정상"
-        if int(row.get("취소발생", 0)) > 0:
-            return "취소"
-        return "정상"
-
-    by_order_month["최종상태"] = by_order_month.apply(_final, axis=1)
+    conds = [
+        by_order_month["반품발생"] > 0,
+        by_order_month["교환발생"] > 0,
+        by_order_month["AS발생"] > 0,
+        by_order_month["정상(상세)"] > 0,
+        by_order_month["취소발생"] > 0,
+    ]
+    by_order_month["최종상태"] = np.select(conds, ["반품", "교환", "AS", "정상", "취소"], default="정상")
 
     o = order_df.copy() if order_df is not None else pd.DataFrame()
     if not o.empty and "주문번호" in o.columns:
         o = filter_cheongho(o)
         cols = [c for c in ["주문번호", "판매인", "판매지국", "수취인", "상품코드", "상품명", "등록일"] if c in o.columns]
         if cols:
-            agg = {}
-            for c in cols:
-                if c == "주문번호":
-                    continue
-                if c == "등록일":
-                    agg[c] = "min"
-                else:
-                    agg[c] = lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else ""
-            base = o[cols].dropna(subset=["주문번호"]).groupby("주문번호", dropna=False).agg(agg).reset_index()
+            src = o[cols].dropna(subset=["주문번호"]).copy()
+            if "등록일" in src.columns:
+                src["_등록일_dt"] = pd.to_datetime(src["등록일"], errors="coerce")
+                src = src.sort_values(["주문번호", "_등록일_dt"], na_position="last")
+            else:
+                src = src.sort_values(["주문번호"])
+
+            for c in [c for c in cols if c not in ("주문번호", "등록일")]:
+                src[c] = src[c].replace("", pd.NA)
+
+            agg_map = {c: "first" for c in cols if c not in ("주문번호", "등록일")}
+            if "등록일" in cols:
+                agg_map["등록일"] = "min"
+
+            base = src.groupby("주문번호", dropna=False).agg(agg_map).reset_index()
+            for c in [c for c in agg_map if c != "등록일"]:
+                base[c] = base[c].fillna("")
             by_order_month = by_order_month.merge(base, on="주문번호", how="left")
 
     return by_order_month
@@ -274,4 +275,3 @@ def kpi_table(delivery_df: pd.DataFrame) -> pd.DataFrame:
         for c in ["AS율", "교환율", "반품율", "취소율"]:
             df[c] = (df[c] * 100).round(2)
     return df
-
