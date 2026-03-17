@@ -35,21 +35,35 @@ jobs:
         run: python tools/perf_guard.py --max-tab2-total 8.0
 
       - name: Telegram notify success
-        if: success() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != ''
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are missing, skip notify."
+            exit 0
+          fi
           MSG="✅ Guardrails 통과\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          RESP=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+          RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=${MSG}")
           echo "Telegram response: $RESP"
           echo "$RESP" | grep -q '"ok":true'
 
       - name: Telegram notify failure
-        if: failure() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != ''
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram secrets are missing, skip notify."
+            exit 0
+          fi
           MSG="🚨 Guardrails 실패\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          RESP=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+          RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "text=${MSG}")
           echo "Telegram response: $RESP"
           echo "$RESP" | grep -q '"ok":true'
