@@ -50,3 +50,39 @@ python ch_NEW_smart_uploader.py --simulate-fail-step git
 
 ## 7) 참고 문서
 - 운영 런북: `docs/OPERATIONS_RUNBOOK.md`
+
+## 8) 초기 세팅 3분 가이드
+### 1. 저장소 준비
+```bash
+git clone https://github.com/pasta0110/tam-auto-dash.git
+cd tam-auto-dash
+pip install -r requirements.txt
+```
+
+### 2. 필수 환경변수 등록 (1회)
+Windows PowerShell:
+```powershell
+setx ERP_LOGIN_ID "YOUR_ID"
+setx ERP_LOGIN_PW "YOUR_PASSWORD"
+```
+
+알림 연동(선택):
+```powershell
+setx TELEGRAM_BOT_TOKEN "YOUR_BOT_TOKEN"
+setx TELEGRAM_CHAT_ID "YOUR_CHAT_ID"
+```
+
+### 3. 배치 역할 확인
+- `주문출고.bat`: 엑셀 관리 자동화 전용
+- `깃허브_업로드.bat`: ERP CSV 추출 + GitHub 업로드 전용
+
+### 4. 동작 검증
+```bash
+python ch_NEW_smart_uploader.py --health-check
+streamlit run app.py
+```
+
+검증 기준:
+- 업로더 Health check `code=0`
+- 앱 상단 `데이터 기준` 갱신 시각 확인
+- `무결성: ✅ meta-hash 일치` 확인
