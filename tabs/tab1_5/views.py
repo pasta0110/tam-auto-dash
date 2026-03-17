@@ -1,5 +1,11 @@
 import pandas as pd
 import streamlit as st
+from services.aggregations import (
+    add_seller_branch_label,
+    build_issue_spike_view,
+    build_r14_seller_summary,
+    build_r14_seller_trend,
+)
 
 from .metrics import (
     safe_to_datetime,
@@ -100,49 +106,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 st.info("전월 데이터가 없어 급증 비교를 할 수 없습니다.")
             else:
                 d_prev = d[d["연월_키"] == prev_month].copy()
-
-                def _issue_counts(df: pd.DataFrame) -> pd.DataFrame:
-                    as_df = df[df["배송유형"].astype(str).eq("AS")].copy()
-                    ex_df = df[df["배송유형"].astype(str).eq("교환")].copy()
-                    out = as_df.groupby("상품코드").size().rename("AS").reset_index().merge(
-                        ex_df.groupby("상품코드").size().rename("교환").reset_index(),
-                        on="상품코드",
-                        how="outer",
-                    ).fillna(0)
-                    out["AS"] = out["AS"].astype(int)
-                    out["교환"] = out["교환"].astype(int)
-                    out["총이슈"] = out["AS"] + out["교환"]
-                    return out
-
-                cur = _issue_counts(d_m)
-                prev = _issue_counts(d_prev)
-                merged = cur.merge(prev, on="상품코드", how="outer", suffixes=("_이번달", "_전월")).fillna(0)
-                for c in ["AS_이번달", "교환_이번달", "총이슈_이번달", "AS_전월", "교환_전월", "총이슈_전월"]:
-                    merged[c] = merged[c].astype(int)
-                merged["증가"] = merged["총이슈_이번달"] - merged["총이슈_전월"]
-                cand = merged[(merged["총이슈_이번달"] > 0) & (merged["증가"] > 0)].copy().sort_values(["증가", "총이슈_이번달"], ascending=False)
-                if cand.empty:
+                view = build_issue_spike_view(d_m, d_prev, top_n=30)
+                if view.empty:
                     st.info("전월 대비 급증한 상품코드가 없습니다.")
                 else:
-                    name_df = d_m.copy()
-                    code_to_name = (
-                        name_df.dropna(subset=["상품코드"]).groupby("상품코드")["상품명"].agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "").to_dict()
-                        if ("상품코드" in name_df.columns and "상품명" in name_df.columns)
-                        else {}
-                    )
-                    view = cand.head(30).copy()
-                    view["상품명"] = view["상품코드"].map(code_to_name).fillna("")
-                    view["상품코드 (상품명)"] = view.apply(lambda r: f"{r['상품코드']} ({r['상품명']})" if str(r.get("상품명", "")).strip() else str(r["상품코드"]), axis=1)
-                    view = view[["상품코드 (상품명)", "증가", "총이슈_이번달", "총이슈_전월", "AS_이번달", "교환_이번달", "AS_전월", "교환_전월"]].rename(
-                        columns={
-                            "총이슈_이번달": "총이슈(이번달)",
-                            "총이슈_전월": "총이슈(전월)",
-                            "AS_이번달": "AS(이번달)",
-                            "교환_이번달": "교환(이번달)",
-                            "AS_전월": "AS(전월)",
-                            "교환_전월": "교환(전월)",
-                        }
-                    )
                     show_table(view, int_cols=["증가", "총이슈(이번달)", "총이슈(전월)", "AS(이번달)", "교환(이번달)", "AS(전월)", "교환(전월)"])
 
     om_all = build_order_month_summary(order_df, delivery_df)
@@ -166,14 +133,9 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 else:
                     view = g.copy()
                     if "판매지국" in base.columns:
-                        seller_to_branch = (
-                            base.dropna(subset=["판매인"]).groupby("판매인")["판매지국"].agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "").to_dict()
-                        )
+                        seller_to_branch = base.dropna(subset=["판매인"]).groupby("판매인")["판매지국"].first().fillna("").to_dict()
                         view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
-                        view["판매인 (판매지국)"] = view.apply(
-                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
-                            axis=1,
-                        )
+                        view = add_seller_branch_label(view, seller_col="판매인", branch_col="판매지국", out_col="판매인 (판매지국)")
                         view = view[["판매인 (판매지국)", "전체", "정상", "취소", "취소율(%)"]]
                     else:
                         view = view[["판매인", "전체", "정상", "취소", "취소율(%)"]]
@@ -184,11 +146,7 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             if event_rank.empty:
                 st.info("이벤트 기준 집계에 필요한 데이터가 없습니다.")
             else:
-                ev = event_rank.copy()
-                ev["판매인 (판매지국)"] = ev.apply(
-                    lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
-                    axis=1,
-                )
+                ev = add_seller_branch_label(event_rank.copy(), seller_col="판매인", branch_col="판매지국", out_col="판매인 (판매지국)")
                 ev = ev[["판매인 (판매지국)", "이벤트_전체", "정상완료", "취소", "반품", "AS", "교환", "이벤트_취소율(%)", "이벤트_반품율(%)"]].head(20)
                 show_table(ev, percent_cols=["이벤트_취소율(%)", "이벤트_반품율(%)"], int_cols=["이벤트_전체", "정상완료", "취소", "반품", "AS", "교환"])
 
@@ -210,14 +168,9 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                 else:
                     view = g.copy()
                     if "판매지국" in base.columns:
-                        seller_to_branch = (
-                            base.dropna(subset=["판매인"]).groupby("판매인")["판매지국"].agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "").to_dict()
-                        )
+                        seller_to_branch = base.dropna(subset=["판매인"]).groupby("판매인")["판매지국"].first().fillna("").to_dict()
                         view["판매지국"] = view["판매인"].map(seller_to_branch).fillna("")
-                        view["판매인 (판매지국)"] = view.apply(
-                            lambda r: f"{r['판매인']} ({r['판매지국']})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
-                            axis=1,
-                        )
+                        view = add_seller_branch_label(view, seller_col="판매인", branch_col="판매지국", out_col="판매인 (판매지국)")
                         view = view[["판매인 (판매지국)", "전체", "정상", "반품", "반품율(%)"]]
                     else:
                         view = view[["판매인", "전체", "정상", "반품", "반품율(%)"]]
@@ -232,27 +185,10 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
             if r14_m.empty:
                 st.info("선택 월에 정상 완료 코호트가 없습니다.")
             else:
-                s = (
-                    r14_m.groupby("판매인", dropna=False).agg(정상완료=("주문번호", "size"), R14=("R14", "sum"), R7=("R7", "sum")).reset_index()
-                )
-                s["판매인"] = s["판매인"].astype(str).fillna("").str.strip()
-                s = s[s["판매인"] != ""].copy()
+                s = build_r14_seller_summary(r14_m)
                 if s.empty:
                     st.info("선택 월에 판매인 매핑 가능한 정상 완료 코호트가 없습니다.")
                 else:
-                    if "판매지국" in r14_m.columns:
-                        seller_to_branch = (
-                            r14_m.groupby("판매인")["판매지국"].agg(lambda x: x.dropna().astype(str).mode().iloc[0] if len(x.dropna()) else "").to_dict()
-                        )
-                        s["판매지국"] = s["판매인"].map(seller_to_branch).fillna("")
-                    s["R14율(%)"] = (s["R14"] / s["정상완료"] * 100).fillna(0).round(2)
-                    s["R7율(%)"] = (s["R7"] / s["정상완료"] * 100).fillna(0).round(2)
-                    s["의심점수"] = ((s["R14율(%)"] >= 15).astype(int) * 2 + (s["R14"] >= 5).astype(int) * 2 + (s["R7율(%)"] >= 10).astype(int))
-                    s = s.sort_values(["의심점수", "R14율(%)", "R14", "정상완료"], ascending=False)
-                    s["판매인 (판매지국)"] = s.apply(
-                        lambda r: f"{r['판매인']} ({r.get('판매지국','')})" if str(r.get("판매지국", "")).strip() else str(r["판매인"]),
-                        axis=1,
-                    )
                     view = s[["판매인 (판매지국)", "정상완료", "R14", "R14율(%)", "R7", "R7율(%)", "의심점수"]].head(30)
                     show_table(view, percent_cols=["R14율(%)", "R7율(%)"], int_cols=["정상완료", "R14", "R7", "의심점수"])
                     st.caption("기준: 코호트월=정상 완료의 배송예정일 월, R14=반품등록일-정상완료 배송예정일이 0~14일.")
@@ -260,13 +196,8 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     sellers = [x for x in s["판매인"].dropna().astype(str).tolist() if x.strip()]
                     if sellers:
                         sel_seller = st.selectbox("추세 확인 판매인", sellers, index=0, key="r14_seller_pick")
-                        t = r14[r14["판매인"].astype(str).eq(sel_seller)].copy()
-                        if not t.empty:
-                            trend = (
-                                t.groupby("코호트월", dropna=False).agg(정상완료=("주문번호", "size"), R14=("R14", "sum"), R7=("R7", "sum")).reset_index().sort_values("코호트월")
-                            )
-                            trend["R14율(%)"] = (trend["R14"] / trend["정상완료"] * 100).fillna(0).round(2)
-                            trend["R7율(%)"] = (trend["R7"] / trend["정상완료"] * 100).fillna(0).round(2)
+                        trend = build_r14_seller_trend(r14, sel_seller)
+                        if not trend.empty:
                             show_table(trend.tail(12), percent_cols=["R14율(%)", "R7율(%)"], int_cols=["정상완료", "R14", "R7"])
                             st.line_chart(trend.set_index("코호트월")[["R14율(%)", "R7율(%)"]], use_container_width=True)
 
@@ -288,4 +219,3 @@ def render(order_df: pd.DataFrame, delivery_df: pd.DataFrame, ctx: dict):
                     dt = safe_to_datetime(order_df[date_col])
                     if dt.notna().any():
                         st.caption(f"주문 데이터 범위({date_col}): {dt.min().date()} ~ {dt.max().date()} / 이 범위 밖 주문번호는 판매인·판매지국이 비어 보일 수 있음")
-
