@@ -10,6 +10,11 @@ from data_processor import process_data
 from services.order_window import order_month_coverage
 from services.integrity import meta_hash_status
 from services.data_contract import validate_raw_inputs
+from services.pipeline_cache import (
+    build_expected_meta,
+    load_processed_snapshot,
+    save_processed_snapshot,
+)
 
 # 탭 모듈 임포트 (각 기능을 담당)
 from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab3_prediction, tab4_validation, tab5_map
@@ -98,7 +103,18 @@ if parts:
     st.caption("데이터 기준: " + " | ".join(parts))
 
 if raw_order_df is not None and raw_delivery_df is not None:
-    errors, warnings = validate_raw_inputs(raw_order_df, raw_delivery_df)
+    _order_sig = _file_sig(config.ORDER_CSV_PATH)
+    _delivery_sig = _file_sig(config.DELIVERY_CSV_PATH)
+    _order_sha = (run_meta or {}).get("order_sha256", "")
+    _delivery_sha = (run_meta or {}).get("delivery_sha256", "")
+    _contract_key = ("contract_v1", _order_sig, _delivery_sig, _order_sha, _delivery_sha)
+    if st.session_state.get("_contract_key") != _contract_key:
+        _errors, _warnings = validate_raw_inputs(raw_order_df, raw_delivery_df)
+        st.session_state["_contract_key"] = _contract_key
+        st.session_state["_contract_errors"] = _errors
+        st.session_state["_contract_warnings"] = _warnings
+    errors = st.session_state.get("_contract_errors", [])
+    warnings = st.session_state.get("_contract_warnings", [])
     if warnings:
         with st.expander(f"데이터 계약 경고 {len(warnings)}건", expanded=False):
             for w in warnings:
@@ -108,8 +124,32 @@ if raw_order_df is not None and raw_delivery_df is not None:
             st.error(f"[{e.code}] {e.message}")
         st.stop()
 
-    # 데이터 가공 (컬럼 추가, 필터링 등)
-    order_df, delivery_df, ana_df = process_data(raw_order_df, raw_delivery_df)
+    # 데이터 가공 (컬럼 추가, 필터링 등): 리런 시 재가공을 피하기 위해 세션+디스크 스냅샷 재사용
+    order_sig = _file_sig(config.ORDER_CSV_PATH)
+    delivery_sig = _file_sig(config.DELIVERY_CSV_PATH)
+    run_meta = run_meta or {}
+    expected_meta = build_expected_meta(
+        order_sig=order_sig,
+        delivery_sig=delivery_sig,
+        order_sha=run_meta.get("order_sha256", ""),
+        delivery_sha=run_meta.get("delivery_sha256", ""),
+    )
+
+    state_key = "_processed_data_meta"
+    state_payload = "_processed_data_payload"
+
+    if st.session_state.get(state_key) == expected_meta and state_payload in st.session_state:
+        payload = st.session_state[state_payload]
+    else:
+        payload = load_processed_snapshot(expected_meta)
+        if payload is None:
+            p_order, p_delivery, p_ana = process_data(raw_order_df, raw_delivery_df)
+            payload = {"order_df": p_order, "delivery_df": p_delivery, "ana_df": p_ana}
+            save_processed_snapshot(p_order, p_delivery, p_ana, expected_meta)
+        st.session_state[state_key] = expected_meta
+        st.session_state[state_payload] = payload
+
+    order_df, delivery_df, ana_df = payload["order_df"], payload["delivery_df"], payload["ana_df"]
 
     # 5. 메인 UI 구성 (선택된 화면만 실행)
     views = [

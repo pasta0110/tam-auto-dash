@@ -27,9 +27,14 @@
 2. Delete `cache/tab2_fixed_compare.pkl` and `cache/tab2_fixed_meta.json` if needed.
 3. Reload app to regenerate snapshot.
 
-## 5. Emergency Rollback
+## 5. Processed Cache Issues (Global)
+1. If app rerun speed drops or stale preprocessing is suspected, delete:
+   - `cache/processed_data.pkl`
+   - `cache/processed_meta.json`
+2. Reload app once to rebuild processed cache from current CSV.
+
+## 6. Emergency Rollback
 1. Identify last stable commit hash.
 2. Revert specific bad commit (do not force reset shared branch).
 3. Push revert commit.
 4. Verify Guardrails and Telegram alerts.
-

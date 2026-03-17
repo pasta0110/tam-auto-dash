@@ -22,6 +22,8 @@ def show_table(df: pd.DataFrame, percent_cols=(), int_cols=()):
         if c in view.columns:
             s = pd.to_numeric(view[c], errors="coerce")
             view[c] = s.map(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+    # 일부 Streamlit 버전에서 hide_index가 무시될 수 있어 숫자 인덱스를 강제로 숨김
+    view.index = [""] * len(view)
     st.dataframe(view, hide_index=True, use_container_width=True)
 
 

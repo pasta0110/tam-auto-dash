@@ -348,7 +348,7 @@ def render(ana_df):
                                 
                             view_df = red_items[display_cols].copy()
                             if "주소" in view_df.columns:
-                                view_df["주소"] = view_df["주소"].apply(_mask_addr)
+                                view_df["주소"] = view_df["주소"].apply(mask_addr)
                             for c in ["수령인", "성명"]:
                                 if c in view_df.columns:
                                     view_df[c] = view_df[c].apply(mask_name)
