@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import hashlib
 import argparse
 import subprocess
 import traceback
@@ -161,6 +162,25 @@ def _run(cmd: list[str], cwd: str | None = None, check: bool = True):
             print(result.stderr.strip())
         raise RuntimeError(f"command failed ({result.returncode}): {' '.join(cmd)}")
     return result
+
+
+def _git_index_sha256(path: str) -> str | None:
+    """
+    Git 인덱스(:path)에 올라간 실제 바이트 기준 SHA256.
+    OS 줄바꿈(CRLF/LF) 차이로 생기는 오탐을 방지한다.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f":{path}"],
+            cwd=git_repo_path,
+            capture_output=True,
+            text=False,
+        )
+        if result.returncode != 0:
+            return None
+        return hashlib.sha256(result.stdout or b"").hexdigest()
+    except Exception:
+        return None
 
 # ==========================================
 # 1. 기본 설정
@@ -615,6 +635,19 @@ def upload_to_github(dry_run: bool = False, simulate_fail_step: str = "") -> int
         print("[STEP] Staging changed files (order/delivery/meta/status)...")
         tracked_files = ["order.csv", "delivery.csv", "erp_run_meta.json", "uploader_status.json"]
         _run(["git", "add"] + tracked_files, cwd=git_repo_path, check=True)
+
+        # 해시는 파일시스템이 아닌 Git 인덱스 바이트 기준으로 다시 계산한다.
+        # (커밋될 실제 내용 기준)
+        staged_order_sha = _git_index_sha256("order.csv")
+        staged_delivery_sha = _git_index_sha256("delivery.csv")
+        if staged_order_sha and staged_delivery_sha:
+            meta["order_sha256"] = staged_order_sha
+            meta["delivery_sha256"] = staged_delivery_sha
+            _write_run_meta(run_meta_path, meta)
+            _run(["git", "add", "erp_run_meta.json"], cwd=git_repo_path, check=True)
+            print("[STEP] Meta hash refreshed from staged Git bytes")
+        else:
+            print("[WARN] Could not refresh staged-byte hash; using file hash fallback")
 
         staged = _run(["git", "diff", "--cached", "--name-only"], cwd=git_repo_path, check=True).stdout.strip()
         if not staged:
