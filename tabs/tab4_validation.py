@@ -5,10 +5,8 @@ import streamlit as st
 import pandas as pd
 import datetime
 import plotly.express as px
-from datetime import timedelta
-from utils.date_utils import get_w_days
 from config import V_ORDER
-from services.prediction_ops import simulate_month_prediction
+from services.prediction_ops import simulate_month_prediction, build_historical_day_trend, build_master_golden_summary
 
 def render(ana_df, ctx):
     st.title("🔍 예측 모델 검증 및 골든 데이 분석")
@@ -79,50 +77,8 @@ def render(ana_df, ctx):
         st.markdown(f"매월 **{sel_day_num}영업일차** 시점의 정확도를 분석합니다. (25년 5월 ~ 전월까지)")
         
         current_month_key = datetime.date.today().strftime('%Y-%m')
-        target_months = [m for m in sorted(ana_df['연월_키'].unique()) if "2025-05" <= m < current_month_key]
-        
-        daily_trend_data = []
-        
-        for m_key in target_months:
-            m_real_df = ana_df[ana_df['연월_키'] == m_key]
-            m_final_act = len(m_real_df)
-            if m_final_act == 0: continue
-            
-            m_y, m_m = map(int, m_key.split('-'))
-            m_s = datetime.date(m_y, m_m, 1)
-            
-            if m_m == 12:
-                m_e = datetime.date(m_y, 12, 31)
-            else:
-                m_e = datetime.date(m_y, m_m + 1, 1) - timedelta(days=1)
-                
-            m_total_w = get_w_days(m_s, m_e)
-            m_days = pd.date_range(m_s, m_e)
-            
-            t_dt, t_w = None, 0
-            for d in m_days:
-                if get_w_days(d.date(), d.date()) > 0:
-                    t_w += 1
-                    if t_w == sel_day_num:
-                        t_dt = d.date()
-                        break
-                        
-            if t_dt:
-                d_act = len(m_real_df[m_real_df['배송예정일_DT'].dt.date <= t_dt])
-                d_30_s = t_dt - timedelta(days=30)
-                d_30_w = get_w_days(d_30_s, t_dt)
-                d_30_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= t_dt)])
-                
-                d_pace = d_30_cnt / d_30_w if d_30_w > 0 else 0
-                d_pred = d_act + int(d_pace * (m_total_w - sel_day_num))
-                d_acc = max(0, min(100, (1 - abs((m_final_act - d_pred) / m_final_act)) * 100)) if m_final_act > 0 else 0
-                
-                daily_trend_data.append({
-                    "연월": m_key, "실제결과": f"{m_final_act}건", "예측치": f"{d_pred}건", "정확도(%)": round(d_acc, 1)
-                })
-                
-        if daily_trend_data:
-            df_daily = pd.DataFrame(daily_trend_data)
+        df_daily = build_historical_day_trend(ana_df, int(sel_day_num), month_from="2025-05", month_to_exclusive=current_month_key)
+        if not df_daily.empty:
             c_l, c_r = st.columns([1, 2])
             with c_l:
                 st.dataframe(df_daily.set_index("연월"), height=300, use_container_width=True)
@@ -140,49 +96,11 @@ def render(ana_df, ctx):
         # --- 역대 통합 골든 데이 분석 ---
         st.subheader("🌐 역대 통합 골든 데이 분석 (25년 5월~전월)")
         st.markdown("전체 기간을 분석하여 **최고 정확도 수준에 가장 먼저 도달하는 가성비 시점**을 도출합니다.")
-        
+        df_master, master_meta = build_master_golden_summary(
+            ana_df, month_from="2025-05", month_to_exclusive=current_month_key, max_day=24
+        )
+        target_months = master_meta.get("target_months", [])
         if len(target_months) > 0:
-            master_summary = {}
-            for m_key in target_months:
-                m_real_final_df = ana_df[ana_df['연월_키'] == m_key]
-                m_final_actual_cnt = len(m_real_final_df)
-                
-                m_year, m_month = map(int, m_key.split('-'))
-                m_start = datetime.date(m_year, m_month, 1)
-                if m_month == 12:
-                    m_end = datetime.date(m_year, 12, 31)
-                else:
-                    m_end = datetime.date(m_year, m_month + 1, 1) - timedelta(days=1)
-                    
-                m_tot_w = get_w_days(m_start, m_end)
-                
-                tw = 0
-                for d in pd.date_range(m_start, m_end):
-                    if get_w_days(d.date(), d.date()) == 0: continue
-                    tw += 1
-                    if tw > 24: break
-                    
-                    d_dt = d.date()
-                    d_act_cnt = len(m_real_final_df[m_real_final_df['배송예정일_DT'].dt.date <= d_dt])
-                    d_30_s = d_dt - timedelta(days=30)
-                    d_30_w = get_w_days(d_30_s, d_dt)
-                    d_30_data_cnt = len(ana_df[(ana_df['배송예정일_DT'].dt.date >= d_30_s) & (ana_df['배송예정일_DT'].dt.date <= d_dt)])
-                    
-                    d_p = d_30_data_cnt / d_30_w if d_30_w > 0 else 0
-                    d_pred = d_act_cnt + int(d_p * (m_tot_w - tw))
-                    d_acc = max(0, min(100, (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100)) if m_final_actual_cnt > 0 else 0
-                    
-                    if tw not in master_summary:
-                        master_summary[tw] = []
-                    master_summary[tw].append(d_acc)
-                    
-            master_history = []
-            for w, accs in master_summary.items():
-                avg_a = sum(accs) / len(accs)
-                master_history.append({"영업일": w, "평균정확도": avg_a})
-                
-            df_master = pd.DataFrame(master_history)
-            
             if not df_master.empty:
                 max_acc = df_master['평균정확도'].max()
                 tolerance = 3.0

@@ -25,14 +25,18 @@ jobs:
       - name: Compile checks
         run: |
           python -m py_compile app.py data_loader.py data_processor.py
-          python -m py_compile services/data_contract.py services/aggregations.py
+          python -m py_compile services/data_contract.py services/aggregations.py services/prediction_ops.py services/map_ops.py services/tab1_summary_ops.py
           python -m py_compile tools/reliability_guard.py tools/perf_guard.py
+          python -m py_compile tabs/tab1_summary.py tabs/tab1_5/views.py tabs/tab2/views.py tabs/tab3_prediction.py tabs/tab4_validation.py tabs/tab5_map.py
 
       - name: Reliability guard
         run: python tools/reliability_guard.py --strict
 
       - name: Perf guard
         run: python tools/perf_guard.py --max-tab2-total 8.0
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p "test_*.py"
 
       - name: Telegram notify success
         if: success()

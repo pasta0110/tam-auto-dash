@@ -1,0 +1,35 @@
+# Operations Runbook
+
+## 1. Daily Checks
+- Confirm `Guardrails` workflow result is green.
+- Confirm Telegram alert arrived for latest main push.
+- Confirm app caption shows current ERP extraction timestamp.
+
+## 2. If Guardrails Fails
+1. Open GitHub Actions run details.
+2. Identify failing step:
+   - `Compile checks`
+   - `Reliability guard`
+   - `Perf guard`
+3. Apply fix and push.
+4. Verify next run sends Telegram success alert.
+
+## 3. Data Contract Errors in App
+1. Check app error block for `[code]` value.
+2. Validate source CSV columns and formats:
+   - `주문번호` not null
+   - `배송예정일` parseable
+   - `주문유형` in allowed domain
+3. Re-run uploader and redeploy.
+
+## 4. Snapshot Issues (Tab2)
+1. If tab2 values look stale, verify `erp_run_meta.json` hash fields.
+2. Delete `cache/tab2_fixed_compare.pkl` and `cache/tab2_fixed_meta.json` if needed.
+3. Reload app to regenerate snapshot.
+
+## 5. Emergency Rollback
+1. Identify last stable commit hash.
+2. Revert specific bad commit (do not force reset shared branch).
+3. Push revert commit.
+4. Verify Guardrails and Telegram alerts.
+

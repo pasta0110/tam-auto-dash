@@ -173,3 +173,80 @@ def simulate_month_prediction(
     }
     return pd.DataFrame(test_rows), meta, pd.DataFrame(acc_hist)
 
+
+def build_historical_day_trend(
+    ana_df: pd.DataFrame, sel_day_num: int, month_from: str = "2025-05", month_to_exclusive: str | None = None
+) -> pd.DataFrame:
+    if ana_df is None or ana_df.empty:
+        return pd.DataFrame()
+
+    if month_to_exclusive is None:
+        month_to_exclusive = datetime.date.today().strftime("%Y-%m")
+
+    target_months = [m for m in sorted(ana_df["연월_키"].unique()) if month_from <= str(m) < month_to_exclusive]
+    rows = []
+    for m_key in target_months:
+        m_real_df = ana_df[ana_df["연월_키"] == m_key]
+        m_final_act = len(m_real_df)
+        if m_final_act == 0:
+            continue
+
+        m_s, m_e = _month_start_end(str(m_key))
+        m_total_w = get_w_days(m_s, m_e)
+        t_dt = find_working_day_date(m_s, m_e, int(sel_day_num))
+        if not t_dt:
+            continue
+        d_act = len(m_real_df[m_real_df["배송예정일_DT"].dt.date <= t_dt])
+        d_30_s = t_dt - timedelta(days=30)
+        d_30_w = get_w_days(d_30_s, t_dt)
+        d_30_cnt = len(ana_df[(ana_df["배송예정일_DT"].dt.date >= d_30_s) & (ana_df["배송예정일_DT"].dt.date <= t_dt)])
+
+        d_pace = d_30_cnt / d_30_w if d_30_w > 0 else 0
+        d_pred = d_act + int(d_pace * (m_total_w - int(sel_day_num)))
+        d_acc = max(0, min(100, (1 - abs((m_final_act - d_pred) / m_final_act)) * 100)) if m_final_act > 0 else 0
+        rows.append({"연월": str(m_key), "실제결과": f"{m_final_act}건", "예측치": f"{d_pred}건", "정확도(%)": round(d_acc, 1)})
+
+    return pd.DataFrame(rows)
+
+
+def build_master_golden_summary(
+    ana_df: pd.DataFrame, month_from: str = "2025-05", month_to_exclusive: str | None = None, max_day: int = 24
+) -> tuple[pd.DataFrame, dict]:
+    if ana_df is None or ana_df.empty:
+        return pd.DataFrame(), {}
+
+    if month_to_exclusive is None:
+        month_to_exclusive = datetime.date.today().strftime("%Y-%m")
+    target_months = [m for m in sorted(ana_df["연월_키"].unique()) if month_from <= str(m) < month_to_exclusive]
+    if not target_months:
+        return pd.DataFrame(), {}
+
+    master_summary: dict[int, list[float]] = {}
+    for m_key in target_months:
+        m_real_final_df = ana_df[ana_df["연월_키"] == m_key]
+        m_final_actual_cnt = len(m_real_final_df)
+        m_start, m_end = _month_start_end(str(m_key))
+        m_tot_w = get_w_days(m_start, m_end)
+
+        tw = 0
+        for d in pd.date_range(m_start, m_end):
+            if get_w_days(d.date(), d.date()) == 0:
+                continue
+            tw += 1
+            if tw > max_day:
+                break
+            d_dt = d.date()
+            d_act_cnt = len(m_real_final_df[m_real_final_df["배송예정일_DT"].dt.date <= d_dt])
+            d_30_s = d_dt - timedelta(days=30)
+            d_30_w = get_w_days(d_30_s, d_dt)
+            d_30_data_cnt = len(ana_df[(ana_df["배송예정일_DT"].dt.date >= d_30_s) & (ana_df["배송예정일_DT"].dt.date <= d_dt)])
+
+            d_p = d_30_data_cnt / d_30_w if d_30_w > 0 else 0
+            d_pred = d_act_cnt + int(d_p * (m_tot_w - tw))
+            d_acc = max(0, min(100, (1 - abs((m_final_actual_cnt - d_pred) / m_final_actual_cnt)) * 100)) if m_final_actual_cnt > 0 else 0
+            master_summary.setdefault(tw, []).append(d_acc)
+
+    master_history = [{"영업일": w, "평균정확도": (sum(accs) / len(accs))} for w, accs in master_summary.items()]
+    df_master = pd.DataFrame(master_history)
+    meta = {"target_months": target_months}
+    return df_master, meta
