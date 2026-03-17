@@ -1,8 +1,8 @@
 import os
 import sys
 import json
+import argparse
 import subprocess
-import shutil
 import traceback
 import requests
 import pandas as pd
@@ -40,14 +40,31 @@ def _write_run_meta(path: str, meta: dict):
         pass
 
 
+def _write_uploader_status(ok: bool, code: int, message: str, extra: dict | None = None):
+    payload = {
+        "ok": bool(ok),
+        "exit_code": int(code),
+        "message": str(message),
+        "updated_at_kst": _now_kst().strftime("%Y-%m-%d %H:%M:%S KST"),
+        "log_file": os.getenv("UPLOADER_LOG_FILE", ""),
+    }
+    if extra:
+        payload.update(extra)
+    try:
+        with open(uploader_status_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 def _run(cmd: list[str], cwd: str | None = None, check: bool = True):
     """
     subprocess 실행 래퍼:
     - 실패 시 stdout/stderr를 즉시 출력해 원인 은폐를 막음
     """
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check and result.returncode != 0:
-        print(f"❌ 명령 실패: {' '.join(cmd)}")
+        print(f"[ERROR] Command failed: {' '.join(cmd)}")
         if result.stdout:
             print("[stdout]")
             print(result.stdout.strip())
@@ -63,6 +80,7 @@ def _run(cmd: list[str], cwd: str | None = None, check: bool = True):
 
 git_repo_path = r"C:\Users\alcls\Documents\tam-auto-dash"
 run_meta_path = os.path.join(git_repo_path, "erp_run_meta.json")
+uploader_status_path = os.path.join(git_repo_path, "uploader_status.json")
 
 session = requests.Session()
 
@@ -70,6 +88,14 @@ today = datetime.today()
 start_date = "2025-02-01"
 ORDER_TARGET_MAX_ROWS = 40000
 ORDER_MAX_LOOKBACK_MONTHS = 24
+EXIT_OK = 0
+EXIT_ENV = 10
+EXIT_REPO = 11
+EXIT_GIT_SYNC = 12
+EXIT_ERP = 13
+EXIT_COMMIT = 15
+EXIT_PUSH = 16
+EXIT_UNKNOWN = 1
 
 def _shift_month(year: int, month: int, delta_months: int):
     m = month + delta_months
@@ -121,16 +147,16 @@ def _get_erp_credentials():
     login_pw = os.getenv("ERP_LOGIN_PW")
     if not login_id or not login_pw:
         raise RuntimeError(
-            "ERP 로그인 환경변수(ERP_LOGIN_ID, ERP_LOGIN_PW)가 설정되지 않았습니다.\n"
-            "- PowerShell(현재 세션): $env:ERP_LOGIN_ID='아이디'; $env:ERP_LOGIN_PW='비밀번호'\n"
-            "- 영구 설정(새 터미널에서 적용): setx ERP_LOGIN_ID \"아이디\"; setx ERP_LOGIN_PW \"비밀번호\""
+            "Missing ERP credentials in environment variables (ERP_LOGIN_ID, ERP_LOGIN_PW).\n"
+            "- PowerShell (current session): $env:ERP_LOGIN_ID='YOUR_ID'; $env:ERP_LOGIN_PW='YOUR_PW'\n"
+            "- Persistent: setx ERP_LOGIN_ID \"YOUR_ID\"; setx ERP_LOGIN_PW \"YOUR_PW\""
         )
     return login_id, login_pw
 
 
 def download_erp_csv():
 
-    print("\n🚀 ERP CSV 다운로드 시작...")
+    print("\n[START] ERP CSV download")
 
     login_id, login_pw = _get_erp_credentials()
 
@@ -143,10 +169,10 @@ def download_erp_csv():
     try:
         login_json = resp.json()
     except Exception as e:
-        raise RuntimeError("ERP 로그인 응답이 JSON 형식이 아닙니다.") from e
+        raise RuntimeError("ERP login response is not valid JSON.") from e
 
     if login_json.get("result") != "success":
-        raise RuntimeError(f"ERP 로그인 실패: {login_json}")
+        raise RuntimeError(f"ERP login failed: {login_json}")
 
     session.post(
         "http://ene.kins.co.kr/loginAction.do",
@@ -324,20 +350,20 @@ def download_erp_csv():
     # 출고 데이터 다운로드
     # =========================
 
-    print("📦 출고 데이터 다운로드 중...")
+    print("[STEP] Downloading delivery data...")
 
     resp = session.post(dl_url, data=delivery_p)
     resp.raise_for_status()
     delivery_df = pd.read_excel(BytesIO(resp.content))
     delivery_path = os.path.join(git_repo_path, "delivery.csv")
     delivery_df.to_csv(delivery_path, index=False, encoding="utf-8-sig")
-    print("✅ delivery.csv 생성 완료")
+    print("[OK] delivery.csv generated")
 
     # =========================
     # 주문 데이터 다운로드
     # =========================
 
-    print("📦 주문 데이터 다운로드 중... (월 전체 단위, 4만건 근접 자동 검증)")
+    print("[STEP] Downloading order data... (monthly full-window, near 40k validation)")
 
     month_frames = []
     included = []
@@ -357,13 +383,13 @@ def download_erp_csv():
         df_m = _download_excel_df(dl_url, month_p)
         rows_m = int(df_m.shape[0])
         ym = f"{y:04d}-{m:02d}"
-        print(f"  - {ym}: {rows_m:,}건")
+        print(f"  - {ym}: {rows_m:,} rows")
 
         if rows_m == 0:
             continue
 
         if month_frames and (cum_rows + rows_m > ORDER_TARGET_MAX_ROWS):
-            print(f"  ↳ 누적 {cum_rows:,}건에서 중단 (다음 월 추가 시 {cum_rows + rows_m:,}건)")
+            print(f"  -> stop at cumulative {cum_rows:,} rows (next month would be {cum_rows + rows_m:,})")
             break
 
         month_frames.append(df_m)
@@ -375,12 +401,12 @@ def download_erp_csv():
     if month_frames:
         order_df = pd.concat(month_frames, ignore_index=True)
         print(
-            "✅ 주문 월범위 선택 완료: "
-            f"{included[-1]}~{included[0]} (월 {len(included)}개, 누적 {cum_rows:,}/{ORDER_TARGET_MAX_ROWS:,}건)"
+            "[OK] Order month-window selected: "
+            f"{included[-1]}~{included[0]} (months={len(included)}, cumulative={cum_rows:,}/{ORDER_TARGET_MAX_ROWS:,})"
         )
     else:
         # 월별 조회 실패/데이터 없음 시 기존 단일 기간 조회로 fallback
-        print("⚠️ 월별 조회 결과가 없어 기존 기간조회 방식으로 fallback 합니다.")
+        print("[WARN] Monthly query returned no data. Fallback to default date-range query.")
         fallback_p = dict(order_p)
         fallback_p["order_date_from"] = order_start_date
         fallback_p["order_date_to"] = order_end_date
@@ -390,7 +416,7 @@ def download_erp_csv():
 
     order_path = os.path.join(git_repo_path, "order.csv")
     order_df.to_csv(order_path, index=False, encoding="utf-8-sig")
-    print("✅ order.csv 생성 완료")
+    print("[OK] order.csv generated")
 
     order_sha256 = file_sha256(order_path)
     delivery_sha256 = file_sha256(delivery_path)
@@ -411,79 +437,108 @@ def download_erp_csv():
 # 3. GitHub 업로드
 # ==========================================
 
-def upload_to_github():
+def health_check() -> tuple[int, str]:
+    try:
+        _get_erp_credentials()
+    except Exception as e:
+        return EXIT_ENV, f"ERP credential check failed: {e}"
+    if not os.path.exists(git_repo_path):
+        return EXIT_REPO, f"Repo path not found: {git_repo_path}"
+    try:
+        _run(["git", "--version"], cwd=git_repo_path, check=True)
+        _run(["git", "remote", "-v"], cwd=git_repo_path, check=True)
+    except Exception as e:
+        return EXIT_GIT_SYNC, f"Git check failed: {e}"
+    return EXIT_OK, "Health check passed"
 
-    print(f"\n✨ [작업 시작] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+def upload_to_github(dry_run: bool = False) -> int:
+    print(f"\n[JOB START] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-
-        # 작업 디렉토리 이동
         if not os.path.exists(git_repo_path):
-            print(f"❌ 폴더를 찾을 수 없습니다: {git_repo_path}")
-            return
+            print(f"[ERROR] Repo path not found: {git_repo_path}")
+            _write_uploader_status(False, EXIT_REPO, "Repo path not found")
+            return EXIT_REPO
 
         os.chdir(git_repo_path)
 
-        # 필수 파일 확인
         required_files = ["app.py", "requirements.txt"]
-
         missing_files = [f for f in required_files if not os.path.exists(f)]
-
         if missing_files:
-            print(f"⚠️ 경고: 다음 파일이 누락되었습니다: {missing_files}")
+            print(f"[WARN] Missing required files: {missing_files}")
 
-        # ==========================
-        # Git 동기화
-        # ==========================
+        print("[STEP] Syncing with remote repository...")
+        try:
+            _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
+            _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
+        except Exception as e:
+            _write_uploader_status(False, EXIT_GIT_SYNC, f"Git sync failed: {e}")
+            return EXIT_GIT_SYNC
 
-        print("🔄 원격 저장소와 상태를 맞추는 중...")
-        _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
-        # 자동화 환경에서 로컬 변경(order/delivery/meta 등)으로 pull이 막히는 경우를 방지
-        _run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=git_repo_path, check=True)
-
-        # ERP 데이터 다운로드 (git sync 이후에 실행해야 pull 충돌을 피할 수 있음)
         extracted_at = _now_kst()
         meta = {"extracted_at_kst": extracted_at.strftime("%Y-%m-%d %H:%M:%S KST")}
-        meta.update(download_erp_csv() or {})
+        try:
+            meta.update(download_erp_csv() or {})
+        except Exception as e:
+            print("[ERROR] ERP download failed.")
+            traceback.print_exc()
+            _write_uploader_status(False, EXIT_ERP, f"ERP download failed: {e}")
+            return EXIT_ERP
 
-        # ==========================
-        # 변경사항 추가
-        # ==========================
-
-        # 메타 파일 기록(커밋에 포함되게 커밋 직전에 저장)
         commit_at = _now_kst()
         meta["commit_at_kst"] = commit_at.strftime("%Y-%m-%d %H:%M:%S KST")
         _write_run_meta(run_meta_path, meta)
-        print("📦 변경사항 패키징 중 (핵심 파일만 add)...")
-        tracked_files = ["order.csv", "delivery.csv", "erp_run_meta.json"]
+        _write_uploader_status(True, EXIT_OK, "Prepared upload (before commit)", extra={"phase": "pre_commit"})
+
+        print("[STEP] Staging changed files (order/delivery/meta/status)...")
+        tracked_files = ["order.csv", "delivery.csv", "erp_run_meta.json", "uploader_status.json"]
         _run(["git", "add"] + tracked_files, cwd=git_repo_path, check=True)
 
         staged = _run(["git", "diff", "--cached", "--name-only"], cwd=git_repo_path, check=True).stdout.strip()
         if not staged:
-            print("ℹ️ 업데이트할 내용이 없습니다. 작업 종료.")
-            return
-
-        # ==========================
-        # 커밋
-        # ==========================
+            print("[INFO] No changes to commit. Job done.")
+            _write_uploader_status(True, EXIT_OK, "No changes to commit")
+            return EXIT_OK
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
-        commit_msg = f"📦 ERP 데이터 자동 업데이트 ({now_str})"
-        _run(["git", "commit", "-m", commit_msg], cwd=git_repo_path, check=True)
+        commit_msg = f"ERP auto update ({now_str})"
+        try:
+            _run(["git", "commit", "-m", commit_msg], cwd=git_repo_path, check=True)
+        except Exception as e:
+            _write_uploader_status(False, EXIT_COMMIT, f"Commit failed: {e}")
+            return EXIT_COMMIT
 
-        # ==========================
-        # 푸시
-        # ==========================
+        changed = _run(["git", "show", "--name-only", "--pretty=format:", "HEAD"], cwd=git_repo_path, check=True).stdout
+        changed_set = set([x.strip() for x in changed.splitlines() if x.strip()])
+        required_changed = {"order.csv", "delivery.csv", "erp_run_meta.json"}
+        if not required_changed.issubset(changed_set):
+            msg = f"Commit verification failed. changed={sorted(changed_set)}"
+            print(f"[ERROR] {msg}")
+            _write_uploader_status(False, EXIT_COMMIT, msg)
+            return EXIT_COMMIT
 
-        print("🚀 깃허브로 전송 중...")
+        if dry_run:
+            print("[DRY-RUN] Commit created; push skipped.")
+            _write_uploader_status(True, EXIT_OK, "Dry-run completed (commit only, no push)")
+            return EXIT_OK
 
-        _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
-        print(f"✅ 최종 성공! [메시지: {commit_msg}]")
+        print("[STEP] Pushing to GitHub...")
+        try:
+            _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+        except Exception as e:
+            _write_uploader_status(False, EXIT_PUSH, f"Push failed: {e}")
+            return EXIT_PUSH
+
+        print(f"[SUCCESS] Completed: {commit_msg}")
+        _write_uploader_status(True, EXIT_OK, "Upload completed", extra={"commit_message": commit_msg})
+        return EXIT_OK
 
     except Exception:
-        print("❌ 오류 발생! (작업 중단)")
+        print("[ERROR] Job failed.")
         traceback.print_exc()
-        raise SystemExit(1)
+        _write_uploader_status(False, EXIT_UNKNOWN, "Unhandled exception")
+        return EXIT_UNKNOWN
 
 
 # ==========================================
@@ -491,4 +546,16 @@ def upload_to_github():
 # ==========================================
 
 if __name__ == "__main__":
-    upload_to_github()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--health-check", action="store_true", help="Validate env/repo/git only and exit.")
+    parser.add_argument("--dry-run", action="store_true", help="Run full flow but skip push.")
+    args = parser.parse_args()
+
+    if args.health_check:
+        code, msg = health_check()
+        print(f"[HEALTH] code={code} msg={msg}")
+        _write_uploader_status(code == EXIT_OK, code, msg)
+        sys.exit(code)
+
+    rc = upload_to_github(dry_run=args.dry_run)
+    sys.exit(rc)

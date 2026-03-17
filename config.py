@@ -9,11 +9,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ORDER_CSV_PATH = os.path.join(BASE_DIR, "order.csv")
 DELIVERY_CSV_PATH = os.path.join(BASE_DIR, "delivery.csv")
 ERP_RUN_META_PATH = os.path.join(BASE_DIR, "erp_run_meta.json")
+UPLOADER_STATUS_PATH = os.path.join(BASE_DIR, "uploader_status.json")
 
 # 원격 CSV (레포에 csv가 포함되어 있으면 보통 필요 없지만, 배포 환경 대비용)
 ORDER_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/order.csv"
 DELIVERY_CSV_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/delivery.csv"
 ERP_RUN_META_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/erp_run_meta.json"
+UPLOADER_STATUS_URL = "https://github.com/pasta0110/tam-auto-dash/raw/refs/heads/main/uploader_status.json"
 
 # GitHub repo info (commit time lookup fallback)
 GITHUB_OWNER = "pasta0110"

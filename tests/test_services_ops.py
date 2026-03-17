@@ -40,9 +40,9 @@ class ServiceOpsTests(unittest.TestCase):
     def test_build_tab3_prediction_has_total(self):
         ana_df = pd.DataFrame(
             {
-                "배송예정일_DT": pd.to_datetime(["2026-03-01", "2026-03-02", "2026-03-03"]),
-                "연월_키": ["2026-03", "2026-03", "2026-03"],
-                "배송사_정제": ["수도권", "수도권", "대전"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04"]),
+                "연월_키": ["2026-03", "2026-03", "2026-03", "2026-03"],
+                "배송사_정제": ["수도권", "수도권", "대전", "수도권"],
             }
         )
         ctx = {
@@ -55,6 +55,8 @@ class ServiceOpsTests(unittest.TestCase):
         self.assertTrue(len(rows) >= 1)
         self.assertIn("remain_w", meta)
         self.assertEqual(rows[-1]["배송사"], "📌 합계")
+        # 3/4 데이터가 탭1 기준(<=어제) 대비 오늘 증가분으로 표시되어야 함
+        self.assertIn("오늘", rows[0]["현재 실적(당월)"])
 
     def test_pipeline_meta_schema(self):
         meta = build_expected_meta((100, 200), (300, 400), "oa", "da")

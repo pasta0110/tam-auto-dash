@@ -15,6 +15,12 @@
 3. Apply fix and push.
 4. Verify next run sends Telegram success alert.
 
+## 2.1 Uploader Quick Checks
+- Health check: `python ch_NEW_smart_uploader.py --health-check`
+- Dry run (commit only, no push): `python ch_NEW_smart_uploader.py --dry-run`
+- Runtime log file: `C:\Users\alcls\Documents\tam-auto-dash\logs\uploader_YYYYMMDD.log`
+- Uploader status json: `uploader_status.json`
+
 ## 3. Data Contract Errors in App
 1. Check app error block for `[code]` value.
 2. Validate source CSV columns and formats:

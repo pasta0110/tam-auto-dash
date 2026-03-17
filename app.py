@@ -35,6 +35,7 @@ st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
 raw_order_df, raw_delivery_df = data_loader.load_raw_data()
 snapshot = getattr(data_loader, "get_data_snapshot_info", lambda: {})()
 run_meta = getattr(data_loader, "get_erp_run_meta", lambda: {})()
+uploader_status = getattr(data_loader, "get_uploader_status", lambda: {})()
 get_commit_time = getattr(data_loader, "get_github_last_commit_time", lambda _path: None)
 
 # 4. 날짜 컨텍스트 확보 (오늘, 어제, 이번 달 등)
@@ -55,6 +56,7 @@ def _file_sig(path: str):
         return (None, None)
 
 parts = []
+hash_ok = None
 if run_meta:
     extracted = run_meta.get("extracted_at_kst")
     committed = run_meta.get("commit_at_kst")
@@ -102,6 +104,13 @@ if parts:
             f"(월전체 {cov['months']}개, 누적 {cov['rows']:,}/{cov['max_rows']:,})"
         )
     st.caption("데이터 기준: " + " | ".join(parts))
+
+if hash_ok is False:
+    st.warning(
+        "무결성(meta-hash) 불일치가 감지되었습니다. "
+        "업로더 수동 1회 실행 후 앱 리로드를 권장합니다. "
+        "지속되면 order/delivery/meta 3파일이 같은 커밋에 포함됐는지 확인하세요."
+    )
 
 if raw_order_df is not None and raw_delivery_df is not None:
     perf = {}
@@ -212,6 +221,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
                         "delivery": int(len(delivery_df)) if delivery_df is not None else 0,
                         "ana": int(len(ana_df)) if ana_df is not None else 0,
                     },
+                    "uploader_status": uploader_status or {},
                 }
             )
 

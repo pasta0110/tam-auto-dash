@@ -15,6 +15,8 @@ from config import (
     DELIVERY_CSV_URL,
     ERP_RUN_META_PATH,
     ERP_RUN_META_URL,
+    UPLOADER_STATUS_PATH,
+    UPLOADER_STATUS_URL,
 )
 
 try:
@@ -88,6 +90,24 @@ def get_erp_run_meta():
             with open(ERP_RUN_META_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         resp = requests.get(ERP_RUN_META_URL, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=120)
+def get_uploader_status():
+    """
+    업로더 실행 결과 상태(성공/실패/코드/로그 경로)
+    - 로컬 파일 우선
+    - 없으면 GitHub raw JSON
+    """
+    try:
+        if os.path.exists(UPLOADER_STATUS_PATH):
+            with open(UPLOADER_STATUS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        resp = requests.get(UPLOADER_STATUS_URL, timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception:
