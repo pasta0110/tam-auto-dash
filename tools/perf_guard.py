@@ -1,6 +1,7 @@
 import json
 import time
 import sys
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,10 @@ def timed(name, fn):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--max-tab2-total", type=float, default=None, help="Fail if tab2_selected_estimated_total exceeds this value.")
+    args = parser.parse_args()
+
     report = {}
 
     _, t_load, loaded = timed("load_raw_data", lambda: data_loader.load_raw_data())
@@ -47,6 +52,8 @@ def main():
     report["legacy_extra_if_all_tabs_execute"] = round(t_om + t_r14, 4)
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    if args.max_tab2_total is not None and report["tab2_selected_estimated_total"] > args.max_tab2_total:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

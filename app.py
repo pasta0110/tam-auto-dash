@@ -98,11 +98,14 @@ if parts:
     st.caption("데이터 기준: " + " | ".join(parts))
 
 if raw_order_df is not None and raw_delivery_df is not None:
-    contract_results = validate_raw_inputs(raw_order_df, raw_delivery_df)
-    invalid = [r for r in contract_results if not r.ok]
-    if invalid:
-        for r in invalid:
-            st.error(f"{r.name} 필수 컬럼 누락: {', '.join(r.missing)}")
+    errors, warnings = validate_raw_inputs(raw_order_df, raw_delivery_df)
+    if warnings:
+        with st.expander(f"데이터 계약 경고 {len(warnings)}건", expanded=False):
+            for w in warnings:
+                st.warning(f"[{w.code}] {w.message}")
+    if errors:
+        for e in errors:
+            st.error(f"[{e.code}] {e.message}")
         st.stop()
 
     # 데이터 가공 (컬럼 추가, 필터링 등)

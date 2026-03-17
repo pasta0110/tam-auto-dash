@@ -1,0 +1,36 @@
+name: Guardrails
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  reliability-and-perf:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile checks
+        run: |
+          python -m py_compile app.py data_loader.py data_processor.py
+          python -m py_compile services/data_contract.py services/aggregations.py
+          python -m py_compile tools/reliability_guard.py tools/perf_guard.py
+
+      - name: Reliability guard
+        run: python tools/reliability_guard.py --strict
+
+      - name: Perf guard
+        run: python tools/perf_guard.py --max-tab2-total 8.0
+

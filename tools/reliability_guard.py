@@ -1,5 +1,6 @@
 import json
 import sys
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +24,10 @@ def normalize(df, sort_cols):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--strict", action="store_true", help="Fail process if checks are not satisfied.")
+    args = parser.parse_args()
+
     order_df, delivery_df = data_loader.load_raw_data()
     order_df, delivery_df, ana_df = process_data(order_df, delivery_df)
 
@@ -50,6 +55,9 @@ def main():
         "delivery_rows": int(len(delivery_df)),
     }
     print(json.dumps(results, ensure_ascii=False, indent=2))
+    failed = (not tab2_ok) or (len(kpi) == 0) or (len(om) == 0) or (len(r14) == 0)
+    if args.strict and failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
