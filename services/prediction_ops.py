@@ -26,6 +26,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
     recent_working_days = get_w_days(last_30_days_start, yesterday)
 
     sum_curr, sum_avg, sum_remain, sum_total = 0, 0.0, 0, 0
+    sum_today_inc = 0
     pred_rows = []
     center_set = set(ana_df["배송사_정제"].unique())
 
@@ -33,6 +34,14 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         if v not in center_set:
             continue
         curr_act = len(ana_df[(ana_df["배송사_정제"] == v) & (ana_df["연월_키"] == m_key)])
+        curr_base = len(
+            ana_df[
+                (ana_df["배송사_정제"] == v)
+                & (ana_df["연월_키"] == m_key)
+                & (ana_df["배송예정일_DT"].dt.date <= yesterday)
+            ]
+        )
+        today_inc = max(0, curr_act - curr_base)
         v_recent_count = len(recent_30d_data[recent_30d_data["배송사_정제"] == v])
 
         avg_30d = v_recent_count / recent_working_days if recent_working_days > 0 else 0
@@ -40,6 +49,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         projected = curr_act + rem_pred
 
         sum_curr += curr_act
+        sum_today_inc += today_inc
         sum_avg += avg_30d
         sum_remain += rem_pred
         sum_total += projected
@@ -47,7 +57,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         pred_rows.append(
             {
                 "배송사": v,
-                "현재 실적(당월)": f"{curr_act} 건",
+                "현재 실적(당월)": f"{curr_act} 건 (오늘 {today_inc}건 ↑)",
                 "최근 30일 평균": f"{avg_30d:.1f} 건/일",
                 f"남은 영업일 예상({remain_w}일)": f"{rem_pred} 건",
                 "당월 최종 예측": f"{projected} 건",
@@ -57,7 +67,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
     pred_rows.append(
         {
             "배송사": "📌 합계",
-            "현재 실적(당월)": f"{sum_curr} 건",
+            "현재 실적(당월)": f"{sum_curr} 건 (오늘 {sum_today_inc}건 ↑)",
             "최근 30일 평균": f"{sum_avg:.1f} 건/일",
             f"남은 영업일 예상({remain_w}일)": f"{sum_remain} 건",
             "당월 최종 예측": f"{sum_total} 건",
