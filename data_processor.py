@@ -101,6 +101,12 @@ def process_data(order_df, delivery_df):
     order_df = order_df.copy() if order_df is not None else None
     delivery_df = delivery_df.copy() if delivery_df is not None else None
 
+    # 전역 기준 통일: 청호나이스 현황판은 매출처 '청호나이스'만 사용
+    if order_df is not None and not order_df.empty:
+        order_df = filter_cheongho(order_df)
+    if delivery_df is not None and not delivery_df.empty:
+        delivery_df = filter_cheongho(delivery_df)
+
     # 1. 공통 전처리 (주문, 배송 데이터)
     for df in [order_df, delivery_df]:
         if df is None: continue
