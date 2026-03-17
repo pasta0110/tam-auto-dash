@@ -38,14 +38,18 @@ jobs:
         if: success() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != ''
         run: |
           MSG="✅ Guardrails 통과\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          RESP=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            --data-urlencode "text=${MSG}" >/dev/null
+            --data-urlencode "text=${MSG}")
+          echo "Telegram response: $RESP"
+          echo "$RESP" | grep -q '"ok":true'
 
       - name: Telegram notify failure
         if: failure() && secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != ''
         run: |
           MSG="🚨 Guardrails 실패\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          RESP=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
             --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-            --data-urlencode "text=${MSG}" >/dev/null
+            --data-urlencode "text=${MSG}")
+          echo "Telegram response: $RESP"
+          echo "$RESP" | grep -q '"ok":true'
