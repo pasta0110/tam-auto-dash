@@ -1,7 +1,8 @@
 {
-  "ok": null,
+  "ok": true,
   "exit_code": 0,
-  "message": "Not run yet",
-  "updated_at_kst": "",
-  "log_file": ""
+  "message": "Prepared upload (before commit)",
+  "updated_at_kst": "2026-03-17 13:01:01 KST",
+  "log_file": "C:\\Users\\alcls\\Documents\\tam-auto-dash\\logs\\uploader_20260317.log",
+  "phase": "pre_commit"
 }
