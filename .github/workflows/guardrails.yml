@@ -48,9 +48,11 @@ jobs:
             echo "Telegram secrets are missing, skip notify."
             exit 0
           fi
-          MSG="✅ Guardrails 통과\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          MSG="✅ 통과 | ${GITHUB_REPOSITORY} | ${GITHUB_REF_NAME} | ${SHORT_SHA}"
           RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "disable_web_page_preview=true" \
             --data-urlencode "text=${MSG}")
           echo "Telegram response: $RESP"
           echo "$RESP" | grep -q '"ok":true'
@@ -65,9 +67,11 @@ jobs:
             echo "Telegram secrets are missing, skip notify."
             exit 0
           fi
-          MSG="🚨 Guardrails 실패\nrepo=${{ github.repository }}\nbranch=${{ github.ref_name }}\ncommit=${{ github.sha }}\nrun=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          MSG="🚨 실패 | ${GITHUB_REPOSITORY} | ${GITHUB_REF_NAME} | ${SHORT_SHA}"
           RESP=$(curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "disable_web_page_preview=true" \
             --data-urlencode "text=${MSG}")
           echo "Telegram response: $RESP"
           echo "$RESP" | grep -q '"ok":true'
