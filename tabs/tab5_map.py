@@ -6,11 +6,10 @@ import pandas as pd
 import requests
 import folium
 import os
-import re
 from streamlit_folium import folium_static
 from folium.plugins import HeatMap, FastMarkerCluster, MarkerCluster
 from concurrent.futures import ThreadPoolExecutor
-import numpy as np
+from services.map_ops import clean_address, mask_addr, mask_name, build_delay_df
 
 try:
     from sklearn.cluster import DBSCAN
@@ -24,42 +23,10 @@ except Exception:
     HAS_MATPLOTLIB = False
 
 
-def _mask_name(v: str) -> str:
-    s = str(v or "").strip()
-    if not s:
-        return "-"
-    if len(s) <= 1:
-        return "*"
-    if len(s) == 2:
-        return s[0] + "*"
-    return s[0] + ("*" * (len(s) - 2)) + s[-1]
-
-
-def _mask_addr(v: str) -> str:
-    s = str(v or "").strip()
-    if not s:
-        return "-"
-    tokens = s.split()
-    if len(tokens) <= 2:
-        return " ".join(tokens)
-    return " ".join(tokens[:2]) + " ..."
-
-
-def _clean_address(addr: str) -> str:
-    if not isinstance(addr, str):
-        return ""
-    addr = re.sub(r"\([^)]*\)", "", addr)
-    addr = re.sub(r"[^\w\s]", " ", addr)
-    tokens = addr.split()
-    if len(tokens) >= 2:
-        return " ".join(tokens[:5])
-    return " ".join(tokens)
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def _prepare_map_base_cached(src_df: pd.DataFrame, csv_path: str, csv_mtime: float):
     df_map_base = src_df.copy()
-    df_map_base["search_addr"] = df_map_base["주소"].apply(_clean_address)
+    df_map_base["search_addr"] = df_map_base["주소"].apply(clean_address)
     target_addrs = [addr for addr in df_map_base["search_addr"].unique() if str(addr).strip()]
 
     if os.path.exists(csv_path):
@@ -81,36 +48,7 @@ def _prepare_map_base_cached(src_df: pd.DataFrame, csv_path: str, csv_mtime: flo
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _build_delay_df_cached(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    if "주문등록일" not in df.columns or "배송예정일" not in df.columns:
-        return pd.DataFrame()
-
-    tmp = df.copy()
-    tmp["주문등록일"] = pd.to_datetime(tmp["주문등록일"], errors="coerce")
-    tmp["배송예정일"] = pd.to_datetime(tmp["배송예정일"], errors="coerce")
-    tmp = tmp.dropna(subset=["주문등록일", "배송예정일"]).copy()
-    if tmp.empty:
-        return pd.DataFrame()
-
-    start_dates = tmp["주문등록일"].values.astype("datetime64[D]")
-    end_dates = tmp["배송예정일"].values.astype("datetime64[D]")
-    delay_days = np.busday_count(start_dates, end_dates + np.timedelta64(1, "D"))
-    tmp["영업배송일수"] = np.maximum(delay_days, 0)
-
-    def get_delivery_status(row):
-        days = row["영업배송일수"]
-        carrier = str(row["배송사_정제"])
-        is_capital = "수도권" in carrier or "수도" in carrier
-        standard_days = 3 if is_capital else 4
-        if days <= standard_days:
-            return "green"
-        if days <= standard_days + 2:
-            return "orange"
-        return "red"
-
-    tmp["상태"] = tmp.apply(get_delivery_status, axis=1)
-    return tmp
+    return build_delay_df(df)
 
 
 def render(ana_df):
@@ -322,8 +260,8 @@ def render(ana_df):
                         # 고객 정보 등 상세 팝업 구성
                         name = row.get('수령인', row.get('성명', '고객'))
                         msg = row.get('배송메세지', row.get('배송메모', '-'))
-                        masked_name = _mask_name(name)
-                        masked_addr = _mask_addr(row.get('주소', row.get('search_addr', '')))
+                        masked_name = mask_name(name)
+                        masked_addr = mask_addr(row.get('주소', row.get('search_addr', '')))
 
                         popup_html = f"""
                         <div style="width:250px; font-size:13px;">
@@ -413,7 +351,7 @@ def render(ana_df):
                                 view_df["주소"] = view_df["주소"].apply(_mask_addr)
                             for c in ["수령인", "성명"]:
                                 if c in view_df.columns:
-                                    view_df[c] = view_df[c].apply(_mask_name)
+                                    view_df[c] = view_df[c].apply(mask_name)
                             view_df.rename(columns={'배송사_정제':'배송사', '영업배송일수':'지연일수(영업일)'}, inplace=True)
                             
                             st.dataframe(

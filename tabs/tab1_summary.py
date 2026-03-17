@@ -4,72 +4,16 @@
 import streamlit as st
 import pandas as pd
 from utils.date_utils import get_w_days
-from datetime import date as _date
-
-def _safe_to_datetime(s: pd.Series) -> pd.Series:
-    try:
-        return pd.to_datetime(s, errors="coerce")
-    except Exception:
-        return pd.to_datetime(pd.Series([None] * len(s)), errors="coerce")
-
-
-def _to_date(d):
-    if isinstance(d, _date) and not hasattr(d, "date"):
-        return d
-    return d.date()
-
-def _filter_order_for_tab1(order_df: pd.DataFrame) -> pd.DataFrame:
-    if order_df is None or order_df.empty:
-        return order_df
-
-    df = order_df.copy()
-    mask = pd.Series(True, index=df.index)
-
-    if "매출처" in df.columns:
-        mask &= df["매출처"].astype(str).eq("청호나이스")
-    if "주문유형" in df.columns:
-        mask &= df["주문유형"].astype(str).eq("정상")
-    if "주문상태" in df.columns:
-        mask &= ~df["주문상태"].astype(str).eq("주문취소")
-
-    return df[mask].copy()
-
-
-def _filter_delivery_for_tab1(delivery_df: pd.DataFrame) -> pd.DataFrame:
-    if delivery_df is None or delivery_df.empty:
-        return delivery_df
-
-    df = delivery_df.copy()
-    mask = pd.Series(True, index=df.index)
-
-    if "매출처" in df.columns:
-        mask &= df["매출처"].astype(str).eq("청호나이스")
-    if "주문유형" in df.columns:
-        mask &= ~df["주문유형"].astype(str).eq("AS")
-    if "주문상태" in df.columns:
-        mask &= ~df["주문상태"].astype(str).eq("주문취소")
-    if "배송유형" in df.columns:
-        mask &= ~df["배송유형"].astype(str).eq("회수")
-    if "배송상태" in df.columns:
-        mask &= ~df["배송상태"].astype(str).eq("미설치")
-    if "상품명" in df.columns:
-        mask &= ~df["상품명"].astype(str).str.contains("쿨패드-", na=False)
-
-    return df[mask].copy()
-
-
-def _ana_df_for_tab1(delivery_df: pd.DataFrame) -> pd.DataFrame:
-    if delivery_df is None or delivery_df.empty:
-        return delivery_df
-
-    status_col = "배송상태" if "배송상태" in delivery_df.columns else "delivery_stat_nm"
-    if status_col not in delivery_df.columns or "주문유형" not in delivery_df.columns:
-        return delivery_df
-
-    return delivery_df[
-        (delivery_df[status_col].astype(str).str.contains("완료|4", na=False))
-        & (delivery_df["주문유형"].astype(str).str.contains("정상", na=False))
-    ].copy()
+from services.tab1_summary_ops import (
+    safe_to_datetime,
+    to_date,
+    filter_order_for_tab1,
+    filter_delivery_for_tab1,
+    ana_df_for_tab1,
+    split_month_day_df,
+    build_main_rows,
+    build_panel_rows,
+)
 
 
 def render(order_df, delivery_df, ana_df, ctx):
@@ -85,14 +29,14 @@ def render(order_df, delivery_df, ana_df, ctx):
     st.title("🏛️ 청호나이스 종합 현황")
 
     # Tab1은 morning_all_in_one_v6_final.py의 주문/출고 필터 기준을 적용한 데이터로만 계산합니다.
-    order_df = _filter_order_for_tab1(order_df)
-    delivery_df = _filter_delivery_for_tab1(delivery_df)
-    ana_df = _ana_df_for_tab1(delivery_df)
+    order_df = filter_order_for_tab1(order_df)
+    delivery_df = filter_delivery_for_tab1(delivery_df)
+    ana_df = ana_df_for_tab1(delivery_df)
     
     yesterday = ctx["yesterday"]
     yesterday_str = ctx["yesterday_str"]
     m_key = ctx["m_key"]
-    y_date = _to_date(yesterday)
+    y_date = to_date(yesterday)
     date_header = f"기준일({y_date.strftime('%m/%d')})"
     
     col1, col2 = st.columns(2)
@@ -105,48 +49,9 @@ def render(order_df, delivery_df, ana_df, ctx):
         
         # 날짜 필터링
         # 엑셀 보고서 기준: 당월 1일 ~ 기준일(=어제)까지
-        order_dt = _safe_to_datetime(order_df[order_date_col]) if order_date_col in order_df.columns else pd.Series([], dtype="datetime64[ns]")
-        if order_dt.notna().any():
-            month_start = pd.Timestamp(year=y_date.year, month=y_date.month, day=1)
-            curr_order = order_df[(order_dt >= month_start) & (order_dt.dt.date <= y_date)].copy()
-            day_order = order_df[order_dt.dt.date == y_date].copy()
-        else:
-            # fallback (파싱 실패 시)
-            curr_order = order_df[order_df[order_date_col].astype(str).str.contains(m_key, na=False)]
-            day_order = curr_order[curr_order[order_date_col].astype(str).str.contains(yesterday_str, na=False)]
-        
-        rows = []
-        for cat in ['매트리스', '파운데이션', '프레임']:
-            if cat == '프레임':
-                # ✅ 프레임은 건수 기준
-                rows.append({
-                    '품목': cat,
-                    '당월 합계': curr_order[curr_order['품목구분'] == cat].shape[0],
-                    date_header: day_order[day_order['품목구분'] == cat].shape[0]
-                })
-            else:
-                # ✅ 매트리스/파운데이션은 수량 기준
-                rows.append({
-                    '품목': cat,
-                    '당월 합계': int(curr_order[curr_order['품목구분'] == cat]['수량'].sum()),
-                    date_header: int(day_order[day_order['품목구분'] == cat]['수량'].sum())
-                })
-        
-        df_order = pd.DataFrame(rows)
-        df_order.loc[len(df_order)] = ['합계', df_order['당월 합계'].sum(), df_order[date_header].sum()]
-        
-        # ✅ 판넬 로직 (독립 수량)
-        p_rows = []
-        for p_num in ['01', '05']:
-            col_name = f'is_판넬{p_num}'
-            p_rows.append({
-                '품목': f'판넬{p_num}',
-                '당월 합계': int(curr_order[curr_order[col_name] == True]['수량'].sum()),
-                date_header: int(day_order[day_order[col_name] == True]['수량'].sum())
-            })
-        
-        df_p_order = pd.DataFrame(p_rows)
-        df_p_order.loc[len(df_p_order)] = ['▶ 판넬 합계', df_p_order['당월 합계'].sum(), df_p_order[date_header].sum()]
+        curr_order, day_order = split_month_day_df(order_df, order_date_col, y_date, m_key, yesterday_str)
+        df_order = build_main_rows(curr_order, day_order, date_header)
+        df_p_order = build_panel_rows(curr_order, day_order, date_header, "▶ 판넬 합계")
         
         st.table(pd.concat([df_order, df_p_order], ignore_index=True).set_index('품목'))
         
@@ -157,7 +62,7 @@ def render(order_df, delivery_df, ana_df, ctx):
         if '배송예정일_DT' in ana_df.columns:
             deli_dt = ana_df['배송예정일_DT']
         else:
-            deli_dt = _safe_to_datetime(ana_df['배송예정일']) if '배송예정일' in ana_df.columns else pd.Series([], dtype="datetime64[ns]")
+            deli_dt = safe_to_datetime(ana_df['배송예정일']) if '배송예정일' in ana_df.columns else pd.Series([], dtype="datetime64[ns]")
 
         if deli_dt.notna().any():
             month_start = pd.Timestamp(year=y_date.year, month=y_date.month, day=1)
