@@ -7,6 +7,7 @@ import pandas as pd
 from data_loader import load_raw_data_with_source
 from services.notifiers import build_telegram_notifier, TelegramNotifier, NoopNotifier
 from uploader.runtime import build_runtime_config
+from services.exception_ops import build_exception_pack
 
 
 class _FakeSource:
@@ -57,6 +58,23 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertTrue(cfg.repo_path.endswith("repo"))
         self.assertEqual(cfg.git_remote, "upstream")
         self.assertEqual(cfg.git_branch, "dev")
+
+    def test_exception_completed_order_is_excluded(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["28-0506955-25-00136", "X-001"],
+                "주문유형": ["정상", "정상"],
+                "주문상태": ["배송중", "배송중"],
+                "배송상태": ["배송중", "배송중"],
+                "등록일": ["2026-03-01", "2026-03-01"],
+                "배송예정일": ["2026-03-02", "2026-03-02"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-02", "2026-03-02"]),
+                "배송사_정제": ["수도권", "수도권"],
+            }
+        )
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-10").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        self.assertFalse((q.get("주문번호", pd.Series(dtype=str)).astype(str) == "28-0506955-25-00136").any())
 
 
 if __name__ == "__main__":

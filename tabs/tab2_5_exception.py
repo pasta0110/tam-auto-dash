@@ -12,6 +12,9 @@ def render(delivery_df, ctx, cache_key=None):
     if state_key not in st.session_state:
         st.session_state[state_key] = build_exception_pack(delivery_df, ctx)
     pack = st.session_state[state_key]
+    excluded_count = int(pack.get("excluded_count", 0) or 0)
+    if excluded_count > 0:
+        st.caption(f"영구 예외 처리 주문번호 제외: {excluded_count}건")
 
     k = pack.get("kpi", {})
     c1, c2, c3, c4 = st.columns(4)

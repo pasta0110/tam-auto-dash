@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import config
 from utils.date_utils import get_w_days
 
 
@@ -68,6 +69,11 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     done = _is_complete(df)
     active = _active_order_state(df)
     not_mis = _not_misinstall(df)
+    if "주문번호" in df.columns:
+        ex_set = {str(x).strip() for x in getattr(config, "EXCEPTION_COMPLETED_ORDER_NOS", set())}
+        not_exception = ~df["주문번호"].astype(str).str.strip().isin(ex_set)
+    else:
+        not_exception = pd.Series([True] * len(df), index=df.index)
     today = pd.to_datetime(ctx.get("yesterday")).normalize() if ctx.get("yesterday") is not None else pd.Timestamp.today().normalize()
     due = pd.to_datetime(df["배송예정일_DT"], errors="coerce").dt.normalize()
 
@@ -80,7 +86,7 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     reg_dt = pd.to_datetime(df[reg_col], errors="coerce").dt.normalize() if reg_col else pd.to_datetime(df["배송예정일_DT"], errors="coerce").dt.normalize()
 
     # SLA proxy KPI (활성 주문 기준, 배송예정일까지 상태 완료 여부)
-    scope = normal & active & not_mis
+    scope = normal & active & not_mis & not_exception
     due_until_today = scope & (due <= today)
     ontime_done = due_until_today & done
     overdue = scope & (due < today) & (~done)
@@ -192,4 +198,5 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         ]
     )
 
-    return {"kpi": kpi, "queue": queue, "causes": causes, "abnormal": abnormal}
+    excluded_count = int((~not_exception).sum())
+    return {"kpi": kpi, "queue": queue, "causes": causes, "abnormal": abnormal, "excluded_count": excluded_count}
