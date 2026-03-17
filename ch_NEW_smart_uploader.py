@@ -39,6 +39,24 @@ def _write_run_meta(path: str, meta: dict):
     except Exception:
         pass
 
+
+def _run(cmd: list[str], cwd: str | None = None, check: bool = True):
+    """
+    subprocess 실행 래퍼:
+    - 실패 시 stdout/stderr를 즉시 출력해 원인 은폐를 막음
+    """
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        print(f"❌ 명령 실패: {' '.join(cmd)}")
+        if result.stdout:
+            print("[stdout]")
+            print(result.stdout.strip())
+        if result.stderr:
+            print("[stderr]")
+            print(result.stderr.strip())
+        raise RuntimeError(f"command failed ({result.returncode}): {' '.join(cmd)}")
+    return result
+
 # ==========================================
 # 1. 기본 설정
 # ==========================================
@@ -374,8 +392,8 @@ def download_erp_csv():
     order_df.to_csv(order_path, index=False, encoding="utf-8-sig")
     print("✅ order.csv 생성 완료")
 
-    order_sha256 = _file_sha256(order_path)
-    delivery_sha256 = _file_sha256(delivery_path)
+    order_sha256 = file_sha256(order_path)
+    delivery_sha256 = file_sha256(delivery_path)
 
     return {
         "order_rows": int(order_df.shape[0]),
@@ -399,11 +417,6 @@ def upload_to_github():
 
     try:
 
-        # ERP 데이터 먼저 다운로드
-        extracted_at = _now_kst()
-        meta = {"extracted_at_kst": extracted_at.strftime("%Y-%m-%d %H:%M:%S KST")}
-        meta.update(download_erp_csv() or {})
-
         # 작업 디렉토리 이동
         if not os.path.exists(git_repo_path):
             print(f"❌ 폴더를 찾을 수 없습니다: {git_repo_path}")
@@ -424,36 +437,28 @@ def upload_to_github():
         # ==========================
 
         print("🔄 원격 저장소와 상태를 맞추는 중...")
+        _run(["git", "fetch", "origin", "main"], cwd=git_repo_path, check=True)
+        _run(["git", "pull", "--rebase", "origin", "main"], cwd=git_repo_path, check=True)
 
-        subprocess.run(
-            ["git", "fetch", "origin", "main"],
-            capture_output=True
-        )
-
-        subprocess.run(
-            ["git", "pull", "origin", "main", "--rebase"],
-            capture_output=True
-        )
+        # ERP 데이터 다운로드 (git sync 이후에 실행해야 pull 충돌을 피할 수 있음)
+        extracted_at = _now_kst()
+        meta = {"extracted_at_kst": extracted_at.strftime("%Y-%m-%d %H:%M:%S KST")}
+        meta.update(download_erp_csv() or {})
 
         # ==========================
         # 변경사항 추가
         # ==========================
 
-        print("📦 변경사항 패키징 중 (add .)...")
+        # 메타 파일 기록(커밋에 포함되게 커밋 직전에 저장)
+        commit_at = _now_kst()
+        meta["commit_at_kst"] = commit_at.strftime("%Y-%m-%d %H:%M:%S KST")
+        _write_run_meta(run_meta_path, meta)
+        print("📦 변경사항 패키징 중 (핵심 파일만 add)...")
+        tracked_files = ["order.csv", "delivery.csv", "erp_run_meta.json"]
+        _run(["git", "add"] + tracked_files, cwd=git_repo_path, check=True)
 
-        subprocess.run(
-            ["git", "add", "."],
-            check=True
-        )
-
-        # 변경 여부 확인
-
-        status = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            text=True
-        )
-
-        if not status:
+        staged = _run(["git", "diff", "--cached", "--name-only"], cwd=git_repo_path, check=True).stdout.strip()
+        if not staged:
             print("ℹ️ 업데이트할 내용이 없습니다. 작업 종료.")
             return
 
@@ -462,18 +467,8 @@ def upload_to_github():
         # ==========================
 
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M')
-
         commit_msg = f"📦 ERP 데이터 자동 업데이트 ({now_str})"
-
-        # 메타 파일 기록(커밋에 포함되게 커밋 직전에 저장)
-        commit_at = _now_kst()
-        meta["commit_at_kst"] = commit_at.strftime("%Y-%m-%d %H:%M:%S KST")
-        _write_run_meta(run_meta_path, meta)
-
-        subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            capture_output=True
-        )
+        _run(["git", "commit", "-m", commit_msg], cwd=git_repo_path, check=True)
 
         # ==========================
         # 푸시
@@ -481,26 +476,8 @@ def upload_to_github():
 
         print("🚀 깃허브로 전송 중...")
 
-        result = subprocess.run(
-            ["git", "push", "origin", "main"],
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode == 0:
-
-            print(f"✅ 최종 성공! [메시지: {commit_msg}]")
-
-        else:
-
-            print("⚠️ 일반 전송 실패, 강제 전송 시도...")
-
-            subprocess.run(
-                ["git", "push", "origin", "main", "--force"],
-                check=True
-            )
-
-            print("🔥 강제 전송 완료!")
+        _run(["git", "push", "origin", "main"], cwd=git_repo_path, check=True)
+        print(f"✅ 최종 성공! [메시지: {commit_msg}]")
 
     except Exception:
         print("❌ 오류 발생! (작업 중단)")
