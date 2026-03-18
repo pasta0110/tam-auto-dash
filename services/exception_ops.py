@@ -168,7 +168,13 @@ def _infer_reason_from_message(message: str) -> str:
                 return True
         return False
 
+    # ★ 처리이력 표기(방문/교환/반품/전산매변 등)는 일정 사유가 아닌 이력 메모로 간주
+    has_star_marker = any(x in m for x in ["★", "☆", "※"])
+    if has_star_marker and _hit(["방문", "교환", "반품", "전산매변", "매변", "매출상태변경", "상태변경"]):
+        return "일정무관(처리이력)"
+
     rules = [
+        ("일정무관(처리이력)", ["전산매변", "매출상태변경", "상태변경"]),
         ("일정무관(전자서명)", ["전자동의", "전자 동의", "전자서명동의", "전자 서명 동의"]),
         ("일정무관(판매조건)", ["특별판매", "일시불", "렌탈", "약정", "할부"]),
         ("고객의사 대기", ["컨택하지말", "연락하지말", "고민해본", "고민해본다", "고민해본다고", "보류요청", "보류 요청", "보류", "대기요청"]),
@@ -188,7 +194,7 @@ def _infer_reason_from_message(message: str) -> str:
 def _final_cause_tag(row: pd.Series) -> str:
     # 우선순위: 상담메세지 기반 추정 > 상태 기반 추정
     msg_reason = str(row.get("지연원인(메세지추정)", "") or "").strip()
-    if msg_reason in ("일정무관(전자서명)", "일정무관(판매조건)"):
+    if msg_reason in ("일정무관(전자서명)", "일정무관(판매조건)", "일정무관(처리이력)"):
         return _cause_tag(row)
     if msg_reason and msg_reason != "메세지 근거 부족":
         if msg_reason == "고객협의":
