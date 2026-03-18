@@ -57,7 +57,7 @@ def _workday_delta(start_dt, end_dt) -> int:
 
 
 def _cause_tag(row: pd.Series) -> str:
-    over = int(row.get("초과영업일", 0) or 0)
+    over = int(row.get("기준초과영업일", row.get("초과영업일", 0)) or 0)
     state = str(row.get("주문상태", "") or "")
     if over >= 3:
         if "배송중" in state:
@@ -81,13 +81,21 @@ def _recommended_action(row: pd.Series) -> str:
         if "배송중" in state:
             return "배송사 팀장 콜(30분내 ETA) + 고객 즉시안내 + 재배차 승인요청"
         return "센터장 에스컬레이션(즉시) + 당일 우선출고 + 고객 안내 발송"
-    if "지연(영업일+1)" in risk:
+    if "지연(기준+2)" in risk:
         if "배송준비" in state:
             return "센터 재배차 요청(2시간내) + 당일 출고확정"
         return "배송사 ETA 재확인(1시간내) + 고객 안내 발송"
-    if "당일 미완료" in risk:
-        return "당일 컷오프 점검(즉시) + 선피킹/선배차"
+    if "지연(기준+1)" in risk:
+        if "배송준비" in state:
+            return "센터 재배차 요청(2시간내) + 당일 출고확정"
+        return "배송사 ETA 재확인(1시간내) + 고객 안내 발송"
     return "사전 안내 발송 + 익일 오전 우선확인"
+
+
+def _standard_lead_days(series: pd.Series) -> pd.Series:
+    s = series.astype(str)
+    is_capital = s.str.contains("수도권|수도", regex=True, na=False)
+    return is_capital.map(lambda x: 3 if x else 4).astype(int)
 
 
 def _build_center_sla(q: pd.DataFrame, scope_df: pd.DataFrame, done_mask: pd.Series, due_mask: pd.Series) -> pd.DataFrame:
@@ -233,26 +241,32 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     q["경과영업일(등록→기준일)"] = [
         _workday_delta(s, today) for s in q_reg
     ]
+    if "배송사_정제" in q.columns:
+        q["정상납기기준(영업일)"] = _standard_lead_days(q["배송사_정제"])
+    else:
+        q["정상납기기준(영업일)"] = 4
     q["초과영업일"] = q["경과영업일(등록→기준일)"] - q["계획리드타임(영업일)"]
+    q["기준초과영업일"] = q["경과영업일(등록→기준일)"] - q["정상납기기준(영업일)"]
 
-    q["리스크구분"] = "D+1 임박"
-    q.loc[q["초과영업일"] >= 0, "리스크구분"] = "당일 미완료"
-    q.loc[q["초과영업일"] >= 1, "리스크구분"] = "지연(영업일+1)"
-    q.loc[q["초과영업일"] >= 3, "리스크구분"] = "중대지연(영업일+3)"
+    q["리스크구분"] = "지연(기준+1)"
+    q.loc[q["기준초과영업일"] >= 2, "리스크구분"] = "지연(기준+2)"
+    q.loc[q["기준초과영업일"] >= 3, "리스크구분"] = "중대지연(기준+3)"
     q["리스크점수"] = 40
-    q.loc[q["초과영업일"] >= 0, "리스크점수"] = 60
-    q.loc[q["초과영업일"] >= 1, "리스크점수"] = 80
-    q.loc[q["초과영업일"] >= 3, "리스크점수"] = 100
+    q.loc[q["기준초과영업일"] >= 1, "리스크점수"] = 80
+    q.loc[q["기준초과영업일"] >= 3, "리스크점수"] = 100
     q["원인태그"] = q.apply(_cause_tag, axis=1)
     q["권장조치"] = q.apply(_recommended_action, axis=1)
 
-    d1 = int((q["초과영업일"] == 1).sum()) if "초과영업일" in q.columns else 0
-    d2 = int((q["초과영업일"] == 2).sum()) if "초과영업일" in q.columns else 0
-    d3p = int((q["초과영업일"] >= 3).sum()) if "초과영업일" in q.columns else 0
+    q_focus = q.loc[q["기준초과영업일"] >= 1].copy()
+
+    d1 = int((q_focus["기준초과영업일"] == 1).sum()) if "기준초과영업일" in q_focus.columns else 0
+    d2 = int((q_focus["기준초과영업일"] == 2).sum()) if "기준초과영업일" in q_focus.columns else 0
+    d3p = int((q_focus["기준초과영업일"] >= 3).sum()) if "기준초과영업일" in q_focus.columns else 0
     kpi["delay_d1"] = d1
     kpi["delay_d2"] = d2
     kpi["delay_d3p"] = d3p
-    kpi["queue_total"] = int(len(q))
+    kpi["queue_total"] = int(len(q_focus))
+    kpi["within_standard_pending"] = int(len(q) - len(q_focus))
 
     # 표시 컬럼
     cols = []
@@ -260,8 +274,10 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "주문번호",
         reg_col if reg_col else "등록일",
         "배송예정일_DT",
+        "정상납기기준(영업일)",
         "계획리드타임(영업일)",
         "경과영업일(등록→기준일)",
+        "기준초과영업일",
         "초과영업일",
         "리스크구분",
         "원인태그",
@@ -276,22 +292,22 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "판매인",
         "담당자",
     ]:
-        if c in q.columns:
+        if c in q_focus.columns:
             cols.append(c)
-    queue = q[cols].copy() if cols else q.copy()
+    queue = q_focus[cols].copy() if cols else q_focus.copy()
     if reg_col and reg_col in queue.columns:
         queue[reg_col] = pd.to_datetime(queue[reg_col], errors="coerce").dt.strftime("%Y-%m-%d")
         queue = queue.rename(columns={reg_col: "주문등록일"})
     if "배송예정일_DT" in queue.columns:
         queue["배송예정일_DT"] = pd.to_datetime(queue["배송예정일_DT"]).dt.strftime("%Y-%m-%d")
         queue = queue.rename(columns={"배송예정일_DT": "배송예정일"})
-    queue = queue.sort_values(["리스크점수", "초과영업일", "지연일수"], ascending=[False, False, False]).head(300)
+    queue = queue.sort_values(["리스크점수", "기준초과영업일", "지연일수"], ascending=[False, False, False]).head(300)
 
     # 원인 분포(권역 중심)
-    if "배송사_정제" in q.columns and not q.empty:
+    if "배송사_정제" in q_focus.columns and not q_focus.empty:
         causes = (
-            q.groupby("배송사_정제", dropna=False)
-            .agg(예외건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"), 평균지연일=("지연일수", "mean"))
+            q_focus.groupby("배송사_정제", dropna=False)
+            .agg(예외건수=("주문번호", "size") if "주문번호" in q_focus.columns else ("리스크점수", "size"), 평균지연일=("지연일수", "mean"))
             .reset_index()
             .rename(columns={"배송사_정제": "센터"})
             .sort_values(["예외건수", "평균지연일"], ascending=[False, False])
@@ -300,26 +316,26 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     else:
         causes = pd.DataFrame(columns=["센터", "예외건수", "평균지연일"])
 
-    if not q.empty and "원인태그" in q.columns:
+    if not q_focus.empty and "원인태그" in q_focus.columns:
         cause_tags = (
-            q.groupby("원인태그", dropna=False)
-            .agg(건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"))
+            q_focus.groupby("원인태그", dropna=False)
+            .agg(건수=("주문번호", "size") if "주문번호" in q_focus.columns else ("리스크점수", "size"))
             .reset_index()
             .sort_values("건수", ascending=False)
         )
     else:
         cause_tags = pd.DataFrame(columns=["원인태그", "건수"])
 
-    if not q.empty and "권장조치" in q.columns:
+    if not q_focus.empty and "권장조치" in q_focus.columns:
         actions = (
-            q.groupby("권장조치", dropna=False)
-            .agg(대상건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"))
+            q_focus.groupby("권장조치", dropna=False)
+            .agg(대상건수=("주문번호", "size") if "주문번호" in q_focus.columns else ("리스크점수", "size"))
             .reset_index()
             .sort_values("대상건수", ascending=False)
         )
     else:
         actions = pd.DataFrame(columns=["권장조치", "대상건수"])
-    center_sla = _build_center_sla(q, scope_df, done, due <= today)
+    center_sla = _build_center_sla(q_focus, scope_df, done, due <= today)
     capacity_warning = _build_capacity_warning(scope_df, today)
 
     # 월 비정상 이벤트(참고): 취소/반품/교환/AS

@@ -119,6 +119,26 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertIn("delay_d2", pack.get("kpi", {}))
         self.assertIn("delay_d3p", pack.get("kpi", {}))
 
+    def test_exception_queue_focuses_only_over_standard_lead(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["CAP-OK", "CAP-LATE", "ETC-LATE"],
+                "주문유형": ["정상", "정상", "정상"],
+                "주문상태": ["배송중", "배송중", "배송준비"],
+                "배송상태": ["배송중", "배송중", "배송중"],
+                "등록일": ["2026-03-10", "2026-03-05", "2026-03-04"],
+                "배송예정일": ["2026-03-15", "2026-03-15", "2026-03-15"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-15", "2026-03-15", "2026-03-15"]),
+                "배송사_정제": ["수도권", "수도권", "대전"],
+            }
+        )
+        # 기준일: 2026-03-12 -> CAP-OK는 수도권 3영업일 이내, 나머지는 기준 초과
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-12").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        self.assertFalse((q["주문번호"] == "CAP-OK").any())
+        self.assertTrue((q["주문번호"] == "CAP-LATE").any())
+        self.assertTrue((q["주문번호"] == "ETC-LATE").any())
+
     @patch("data_loader._get_source")
     def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):
         mock_get_source.return_value = _FailingSource()

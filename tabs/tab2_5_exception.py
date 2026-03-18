@@ -6,7 +6,7 @@ from services.exception_ops import build_exception_pack
 
 def render(delivery_df, ctx, cache_key=None):
     st.title("⚠️ 2.5 운영 예외 큐")
-    st.caption("활성 주문상태(주문확정/배송준비/배송중) 기준으로, 주문등록일→배송예정일 영업일 계획 대비 지연 리스크를 우선순위화합니다.")
+    st.caption("활성 주문상태(주문확정/배송준비/배송중) 기준으로, 정상납기(수도권 3영업일/기타 4영업일) 초과 건만 우선순위화합니다.")
     mobile_mode = str(st.query_params.get("mobile", "0")) == "1"
     if mobile_mode:
         st.caption("모바일 최적화 모드: 핵심 컬럼만 표시")
@@ -31,7 +31,7 @@ def render(delivery_df, ctx, cache_key=None):
     c1.metric("SLA(약속일내 완료율)", f"{k.get('ontime_rate', 0):.2f}%")
     c2.metric("지연(D+1+)", f"{k.get('overdue', 0):,}건")
     c3.metric("48시간 내 위험", f"{k.get('at_risk_48h', 0):,}건")
-    c4.metric("당일 미완료", f"{k.get('due_today', 0):,}건")
+    c4.metric("기준이내 대기", f"{k.get('within_standard_pending', 0):,}건")
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("D+1", f"{k.get('delay_d1', 0):,}건")
     c6.metric("D+2", f"{k.get('delay_d2', 0):,}건")
@@ -47,7 +47,7 @@ def render(delivery_df, ctx, cache_key=None):
         limit = st.slider("표시 건수", min_value=20, max_value=300, value=default_limit, step=20, key="exc_limit")
         qv = q.head(limit).copy()
         if mobile_mode:
-            keep_cols = [c for c in ["주문번호", "배송예정일", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
+            keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
             if keep_cols:
                 qv = qv[keep_cols]
         st.dataframe(qv, use_container_width=True, hide_index=True, height=420)
