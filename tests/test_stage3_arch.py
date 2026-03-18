@@ -115,6 +115,7 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertIn("actions", pack)
         self.assertIn("center_sla", pack)
         self.assertIn("capacity_warning", pack)
+        self.assertIn("person_reasons", pack)
         self.assertIn("delay_d1", pack.get("kpi", {}))
         self.assertIn("delay_d2", pack.get("kpi", {}))
         self.assertIn("delay_d3p", pack.get("kpi", {}))
@@ -138,6 +139,28 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertFalse((q["주문번호"] == "CAP-OK").any())
         self.assertTrue((q["주문번호"] == "CAP-LATE").any())
         self.assertTrue((q["주문번호"] == "ETC-LATE").any())
+
+    def test_person_message_reason_inference(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["P-001", "P-002"],
+                "주문유형": ["정상", "정상"],
+                "주문상태": ["배송중", "배송준비"],
+                "배송상태": ["배송중", "배송중"],
+                "등록일": ["2026-03-01", "2026-03-02"],
+                "배송예정일": ["2026-03-15", "2026-03-15"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-15", "2026-03-15"]),
+                "배송사_정제": ["수도권", "수도권"],
+                "수취인": ["홍길동", "홍길동"],
+                "주소": ["서울 강남구 테헤란로 1", "서울 강남구 테헤란로 1"],
+                "수취인연락처": ["010-1111-2222", "01011112222"],
+                "상담메세지": ["고객요청으로 다음주 방문", "고객요청 재방문 일정 조율"],
+            }
+        )
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-12").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        self.assertIn("지연원인(메세지추정)", q.columns)
+        self.assertTrue((q["지연원인(메세지추정)"] == "고객 일정/요청").any())
 
     @patch("data_loader._get_source")
     def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):

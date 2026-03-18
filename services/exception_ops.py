@@ -98,6 +98,84 @@ def _standard_lead_days(series: pd.Series) -> pd.Series:
     return is_capital.map(lambda x: 3 if x else 4).astype(int)
 
 
+def _first_col(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _norm_text(v) -> str:
+    s = str(v or "").strip().lower()
+    return " ".join(s.split())
+
+
+def _norm_phone(v) -> str:
+    digits = "".join(ch for ch in str(v or "") if ch.isdigit())
+    return digits[-11:] if digits else ""
+
+
+def _person_key_series(df: pd.DataFrame) -> pd.Series:
+    name_col = _first_col(df, ["수취인", "수령인", "성명"])
+    addr_col = _first_col(df, ["주소", "address"])
+    phone_col = _first_col(df, ["수취인연락처", "연락처", "휴대폰번호", "전화번호"])
+    name_s = df[name_col].map(_norm_text) if name_col else pd.Series([""] * len(df), index=df.index)
+    addr_s = df[addr_col].map(_norm_text) if addr_col else pd.Series([""] * len(df), index=df.index)
+    phone_s = df[phone_col].map(_norm_phone) if phone_col else pd.Series([""] * len(df), index=df.index)
+    key = name_s + "|" + addr_s + "|" + phone_s
+    return key.where(key != "||", "")
+
+
+def _message_series(df: pd.DataFrame) -> pd.Series:
+    msg_cols = [c for c in ["상담메세지", "상담메시지", "배송메세지", "배송메시지", "배송메모", "비고"] if c in df.columns]
+    if not msg_cols:
+        return pd.Series([""] * len(df), index=df.index)
+    m = df[msg_cols].fillna("").astype(str).agg(" ".join, axis=1)
+    return m.map(_norm_text)
+
+
+def _infer_reason_from_message(message: str) -> str:
+    m = str(message or "")
+    if not m:
+        return "메세지 근거 부족"
+    rules = [
+        ("고객 일정/요청", ["고객요청", "고객 사정", "고객사정", "부재", "시간", "오후", "주말", "재방문", "일정", "조율", "연락"]),
+        ("주소/연락처 정보 오류", ["주소오류", "주소 불명", "연락처오류", "오기입", "오입력", "번호 오류"]),
+        ("재고/출고 지연", ["재고", "입고", "품절", "출고지연", "물류", "창고"]),
+        ("설치/배차 지연", ["기사", "설치", "배차", "방문", "스케줄"]),
+        ("취소/반품 연관", ["취소", "반품"]),
+    ]
+    for label, kws in rules:
+        if any(kw in m for kw in kws):
+            return label
+    return "기타 운영 이슈"
+
+
+def _build_person_reason_pack(df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
+    if df.empty:
+        return pd.Series(dtype=object), pd.DataFrame(columns=["동일인키", "동일인주문수", "지연원인(메세지추정)", "상담메세지요약"])
+    key_s = _person_key_series(df)
+    msg_s = _message_series(df)
+    tmp = pd.DataFrame({"동일인키": key_s, "_msg": msg_s}, index=df.index)
+    tmp = tmp[tmp["동일인키"] != ""].copy()
+    if tmp.empty:
+        return key_s, pd.DataFrame(columns=["동일인키", "동일인주문수", "지연원인(메세지추정)", "상담메세지요약"])
+
+    def _merge_msgs(s: pd.Series) -> str:
+        vals = [x for x in s.astype(str).tolist() if str(x).strip()]
+        uniq = list(dict.fromkeys(vals))
+        merged = " | ".join(uniq)
+        return merged[:280]
+
+    person = (
+        tmp.groupby("동일인키", dropna=False)
+        .agg(동일인주문수=("동일인키", "size"), 상담메세지요약=("_msg", _merge_msgs))
+        .reset_index()
+    )
+    person["지연원인(메세지추정)"] = person["상담메세지요약"].map(_infer_reason_from_message)
+    return key_s, person
+
+
 def _build_center_sla(q: pd.DataFrame, scope_df: pd.DataFrame, done_mask: pd.Series, due_mask: pd.Series) -> pd.DataFrame:
     if "배송사_정제" not in scope_df.columns:
         return pd.DataFrame(columns=["센터", "약속건", "완료건", "SLA(%)", "예외건수"])
@@ -176,6 +254,7 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
             "capacity_warning": pd.DataFrame(),
             "cause_tags": pd.DataFrame(),
             "actions": pd.DataFrame(),
+            "person_reasons": pd.DataFrame(),
             "abnormal": pd.DataFrame(),
         }
 
@@ -256,6 +335,14 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     q.loc[q["기준초과영업일"] >= 3, "리스크점수"] = 100
     q["원인태그"] = q.apply(_cause_tag, axis=1)
     q["권장조치"] = q.apply(_recommended_action, axis=1)
+    person_key_s, person_df = _build_person_reason_pack(df)
+    q["동일인키"] = person_key_s.loc[q.index]
+    if not person_df.empty:
+        q = q.merge(
+            person_df[["동일인키", "동일인주문수", "지연원인(메세지추정)", "상담메세지요약"]],
+            on="동일인키",
+            how="left",
+        )
 
     q_focus = q.loc[q["기준초과영업일"] >= 1].copy()
 
@@ -283,6 +370,9 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "원인태그",
         "리스크점수",
         "권장조치",
+        "동일인주문수",
+        "지연원인(메세지추정)",
+        "상담메세지요약",
         "지연일수",
         "주문상태",
         "배송상태",
@@ -335,6 +425,17 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         )
     else:
         actions = pd.DataFrame(columns=["권장조치", "대상건수"])
+
+    if not q_focus.empty and "동일인키" in q_focus.columns and not person_df.empty:
+        person_reasons = (
+            q_focus[["동일인키"]]
+            .merge(person_df, on="동일인키", how="left")
+            .dropna(subset=["동일인키"])
+            .drop_duplicates(subset=["동일인키"])
+            .sort_values(["동일인주문수"], ascending=[False])
+        )
+    else:
+        person_reasons = pd.DataFrame(columns=["동일인키", "동일인주문수", "지연원인(메세지추정)", "상담메세지요약"])
     center_sla = _build_center_sla(q_focus, scope_df, done, due <= today)
     capacity_warning = _build_capacity_warning(scope_df, today)
 
@@ -369,6 +470,7 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "capacity_warning": capacity_warning,
         "cause_tags": cause_tags,
         "actions": actions,
+        "person_reasons": person_reasons,
         "abnormal": abnormal,
         "excluded_count": excluded_count,
     }

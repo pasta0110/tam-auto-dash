@@ -81,6 +81,17 @@ def render(delivery_df, ctx, cache_key=None):
                 st.info("비정상 이벤트 데이터가 없습니다.")
             else:
                 st.dataframe(abnormal, use_container_width=True, hide_index=True, height=240)
+            st.subheader("5) 동일인 상담메세지 기반 지연원인")
+            person_reasons = pack.get("person_reasons", pd.DataFrame())
+            if person_reasons is None or person_reasons.empty:
+                st.info("동일인 원인 추정 데이터가 없습니다.")
+            else:
+                st.dataframe(
+                    person_reasons[["동일인주문수", "지연원인(메세지추정)", "상담메세지요약"]].head(10),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=260,
+                )
         else:
             col_l, col_r = st.columns(2)
             with col_l:
@@ -110,6 +121,17 @@ def render(delivery_df, ctx, cache_key=None):
                 st.info("비정상 이벤트 데이터가 없습니다.")
             else:
                 st.dataframe(abnormal, use_container_width=True, hide_index=True, height=220)
+            st.subheader("5) 동일인 상담메세지 기반 지연원인")
+            person_reasons = pack.get("person_reasons", pd.DataFrame())
+            if person_reasons is None or person_reasons.empty:
+                st.info("동일인 원인 추정 데이터가 없습니다.")
+            else:
+                st.dataframe(
+                    person_reasons[["동일인주문수", "지연원인(메세지추정)", "상담메세지요약"]].head(20),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=240,
+                )
 
     if role == "센터장":
         st.subheader("2) 센터별 SLA/예외")
