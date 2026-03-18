@@ -29,7 +29,8 @@ st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
-raw_order_df, raw_delivery_df = data_loader.load_raw_data()
+load_result = data_loader.load_raw_data_result()
+raw_order_df, raw_delivery_df = load_result.get("order_df"), load_result.get("delivery_df")
 snapshot = getattr(data_loader, "get_data_snapshot_info", lambda: {})()
 run_meta = getattr(data_loader, "get_erp_run_meta", lambda: {})()
 uploader_status = getattr(data_loader, "get_uploader_status", lambda: {})()
@@ -127,4 +128,19 @@ if raw_order_df is not None and raw_delivery_df is not None:
         )
 
 else:
-    st.error("데이터를 불러올 수 없습니다. 네트워크 상태를 확인해주세요.")
+    st.error(f"데이터를 불러올 수 없습니다: {load_result.get('error_message') or '원인 미상'}")
+    diagnostics = load_result.get("diagnostics") or {}
+    if diagnostics:
+        with st.expander("로딩 진단 상세(원인 추적)", expanded=False):
+            for target in ["order", "delivery"]:
+                d = diagnostics.get(target) or {}
+                if not d:
+                    continue
+                st.markdown(f"**{target}.csv**")
+                st.write(f"- local_path: `{d.get('local_path')}`")
+                st.write(f"- remote_url: `{d.get('remote_url')}`")
+                st.write(f"- selected_source: `{d.get('selected_source')}`")
+                st.write(f"- local_error: `{d.get('local_error')}`")
+                st.write(f"- remote_error: `{d.get('remote_error')}`")
+            if diagnostics.get("unexpected_error"):
+                st.write(f"- unexpected_error: `{diagnostics.get('unexpected_error')}`")

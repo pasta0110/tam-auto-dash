@@ -59,6 +59,33 @@ class RepositoryDataSource:
         self.local = local or LocalCsvSource()
         self.remote = remote or GithubRawSource()
 
+    @staticmethod
+    def _exc_text(exc: Exception) -> str:
+        return f"{type(exc).__name__}: {exc}"
+
+    def load_csv_with_diagnostics(self, local_path: str, remote_url: str) -> tuple[pd.DataFrame | None, dict]:
+        diag = {
+            "selected_source": None,
+            "local_path": local_path,
+            "remote_url": remote_url,
+            "local_error": None,
+            "remote_error": None,
+        }
+        try:
+            df = self.local.read_csv(local_path)
+            diag["selected_source"] = "local"
+            return df, diag
+        except Exception as e_local:
+            diag["local_error"] = self._exc_text(e_local)
+
+        try:
+            df = self.remote.read_csv(remote_url)
+            diag["selected_source"] = "remote"
+            return df, diag
+        except Exception as e_remote:
+            diag["remote_error"] = self._exc_text(e_remote)
+            return None, diag
+
     def load_csv_prefer_local(self, local_path: str, remote_url: str) -> tuple[pd.DataFrame, str]:
         try:
             return self.local.read_csv(local_path), "local"

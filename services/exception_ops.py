@@ -56,9 +56,120 @@ def _workday_delta(start_dt, end_dt) -> int:
         return 0
 
 
+def _cause_tag(row: pd.Series) -> str:
+    over = int(row.get("초과영업일", 0) or 0)
+    state = str(row.get("주문상태", "") or "")
+    if over >= 3:
+        if "배송중" in state:
+            return "배송중 장기지연"
+        if "배송준비" in state:
+            return "센터출고 병목"
+        return "출고미착수 장기지연"
+    if over >= 1:
+        if "배송중" in state:
+            return "배송중 지연"
+        return "약속일 초과"
+    if over >= 0:
+        return "당일 마감위험"
+    return "D+1 임박위험"
+
+
+def _recommended_action(row: pd.Series) -> str:
+    risk = str(row.get("리스크구분", "") or "")
+    state = str(row.get("주문상태", "") or "")
+    if "중대지연" in risk:
+        if "배송중" in state:
+            return "배송사 팀장 콜(30분내 ETA) + 고객 즉시안내 + 재배차 승인요청"
+        return "센터장 에스컬레이션(즉시) + 당일 우선출고 + 고객 안내 발송"
+    if "지연(영업일+1)" in risk:
+        if "배송준비" in state:
+            return "센터 재배차 요청(2시간내) + 당일 출고확정"
+        return "배송사 ETA 재확인(1시간내) + 고객 안내 발송"
+    if "당일 미완료" in risk:
+        return "당일 컷오프 점검(즉시) + 선피킹/선배차"
+    return "사전 안내 발송 + 익일 오전 우선확인"
+
+
+def _build_center_sla(q: pd.DataFrame, scope_df: pd.DataFrame, done_mask: pd.Series, due_mask: pd.Series) -> pd.DataFrame:
+    if "배송사_정제" not in scope_df.columns:
+        return pd.DataFrame(columns=["센터", "약속건", "완료건", "SLA(%)", "예외건수"])
+    m = scope_df.loc[due_mask].copy()
+    if m.empty:
+        return pd.DataFrame(columns=["센터", "약속건", "완료건", "SLA(%)", "예외건수"])
+    m["_done"] = done_mask.loc[m.index].astype(int)
+    center = (
+        m.groupby("배송사_정제", dropna=False)
+        .agg(약속건=("배송사_정제", "size"), 완료건=("_done", "sum"))
+        .reset_index()
+        .rename(columns={"배송사_정제": "센터"})
+    )
+    center["SLA(%)"] = (center["완료건"] / center["약속건"] * 100.0).round(2)
+    if not q.empty and "배송사_정제" in q.columns:
+        q_counts = (
+            q.groupby("배송사_정제", dropna=False)
+            .agg(예외건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"))
+            .reset_index()
+            .rename(columns={"배송사_정제": "센터"})
+        )
+        center = center.merge(q_counts, on="센터", how="left")
+    center["예외건수"] = center["예외건수"].fillna(0).astype(int)
+    return center.sort_values(["SLA(%)", "예외건수"], ascending=[True, False])
+
+
+def _build_capacity_warning(scope_df: pd.DataFrame, today: pd.Timestamp) -> pd.DataFrame:
+    if scope_df.empty or "배송예정일_DT" not in scope_df.columns or "배송사_정제" not in scope_df.columns:
+        return pd.DataFrame(columns=["센터", "내일예정", "기준치", "초과", "위험도"])
+    d = scope_df.copy()
+    d["_due"] = pd.to_datetime(d["배송예정일_DT"], errors="coerce").dt.normalize()
+    d = d.dropna(subset=["_due"])
+    if d.empty:
+        return pd.DataFrame(columns=["센터", "내일예정", "기준치", "초과", "위험도"])
+    tomorrow = today + pd.Timedelta(days=1)
+    tomorrow_cnt = (
+        d.loc[d["_due"] == tomorrow]
+        .groupby("배송사_정제", dropna=False)
+        .size()
+        .rename("내일예정")
+        .reset_index()
+        .rename(columns={"배송사_정제": "센터"})
+    )
+    hist = d.loc[(d["_due"] >= (today - pd.Timedelta(days=35))) & (d["_due"] <= today)].copy()
+    if hist.empty or tomorrow_cnt.empty:
+        return pd.DataFrame(columns=["센터", "내일예정", "기준치", "초과", "위험도"])
+    base = (
+        hist.groupby(["배송사_정제", "_due"], dropna=False)
+        .size()
+        .rename("일건수")
+        .reset_index()
+        .groupby("배송사_정제", dropna=False)["일건수"]
+        .quantile(0.9)
+        .reset_index()
+        .rename(columns={"배송사_정제": "센터", "일건수": "기준치"})
+    )
+    w = tomorrow_cnt.merge(base, on="센터", how="left")
+    w["기준치"] = w["기준치"].fillna(0).round().astype(int)
+    w["초과"] = w["내일예정"] - w["기준치"]
+    w = w[w["초과"] > 0].copy()
+    if w.empty:
+        return pd.DataFrame(columns=["센터", "내일예정", "기준치", "초과", "위험도"])
+    w["위험도"] = "중"
+    w.loc[w["초과"] >= 30, "위험도"] = "상"
+    w.loc[w["초과"] >= 60, "위험도"] = "최상"
+    return w.sort_values(["초과", "내일예정"], ascending=[False, False]).reset_index(drop=True)
+
+
 def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     if delivery_df is None or delivery_df.empty:
-        return {"kpi": {}, "queue": pd.DataFrame(), "causes": pd.DataFrame(), "abnormal": pd.DataFrame()}
+        return {
+            "kpi": {},
+            "queue": pd.DataFrame(),
+            "causes": pd.DataFrame(),
+            "center_sla": pd.DataFrame(),
+            "capacity_warning": pd.DataFrame(),
+            "cause_tags": pd.DataFrame(),
+            "actions": pd.DataFrame(),
+            "abnormal": pd.DataFrame(),
+        }
 
     df = delivery_df.copy()
     if "배송예정일_DT" not in df.columns and "배송예정일" in df.columns:
@@ -87,6 +198,7 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
 
     # SLA proxy KPI (활성 주문 기준, 배송예정일까지 상태 완료 여부)
     scope = normal & active & not_mis & not_exception
+    scope_df = df.loc[scope].copy()
     due_until_today = scope & (due <= today)
     ontime_done = due_until_today & done
     overdue = scope & (due < today) & (~done)
@@ -131,6 +243,16 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     q.loc[q["초과영업일"] >= 0, "리스크점수"] = 60
     q.loc[q["초과영업일"] >= 1, "리스크점수"] = 80
     q.loc[q["초과영업일"] >= 3, "리스크점수"] = 100
+    q["원인태그"] = q.apply(_cause_tag, axis=1)
+    q["권장조치"] = q.apply(_recommended_action, axis=1)
+
+    d1 = int((q["초과영업일"] == 1).sum()) if "초과영업일" in q.columns else 0
+    d2 = int((q["초과영업일"] == 2).sum()) if "초과영업일" in q.columns else 0
+    d3p = int((q["초과영업일"] >= 3).sum()) if "초과영업일" in q.columns else 0
+    kpi["delay_d1"] = d1
+    kpi["delay_d2"] = d2
+    kpi["delay_d3p"] = d3p
+    kpi["queue_total"] = int(len(q))
 
     # 표시 컬럼
     cols = []
@@ -142,7 +264,9 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "경과영업일(등록→기준일)",
         "초과영업일",
         "리스크구분",
+        "원인태그",
         "리스크점수",
+        "권장조치",
         "지연일수",
         "주문상태",
         "배송상태",
@@ -176,6 +300,28 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     else:
         causes = pd.DataFrame(columns=["센터", "예외건수", "평균지연일"])
 
+    if not q.empty and "원인태그" in q.columns:
+        cause_tags = (
+            q.groupby("원인태그", dropna=False)
+            .agg(건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"))
+            .reset_index()
+            .sort_values("건수", ascending=False)
+        )
+    else:
+        cause_tags = pd.DataFrame(columns=["원인태그", "건수"])
+
+    if not q.empty and "권장조치" in q.columns:
+        actions = (
+            q.groupby("권장조치", dropna=False)
+            .agg(대상건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"))
+            .reset_index()
+            .sort_values("대상건수", ascending=False)
+        )
+    else:
+        actions = pd.DataFrame(columns=["권장조치", "대상건수"])
+    center_sla = _build_center_sla(q, scope_df, done, due <= today)
+    capacity_warning = _build_capacity_warning(scope_df, today)
+
     # 월 비정상 이벤트(참고): 취소/반품/교환/AS
     if "배송예정일_DT" in df.columns:
         df["_mkey"] = _month_key(df["배송예정일_DT"])
@@ -199,4 +345,14 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
     )
 
     excluded_count = int((~not_exception).sum())
-    return {"kpi": kpi, "queue": queue, "causes": causes, "abnormal": abnormal, "excluded_count": excluded_count}
+    return {
+        "kpi": kpi,
+        "queue": queue,
+        "causes": causes,
+        "center_sla": center_sla,
+        "capacity_warning": capacity_warning,
+        "cause_tags": cause_tags,
+        "actions": actions,
+        "abnormal": abnormal,
+        "excluded_count": excluded_count,
+    }

@@ -3,7 +3,6 @@
 
 import os
 import streamlit as st
-import requests
 from config import (
     ORDER_CSV_PATH,
     DELIVERY_CSV_PATH,
@@ -21,6 +20,12 @@ try:
 except Exception:
     GITHUB_OWNER = "pasta0110"
     GITHUB_REPO = "tam-auto-dash"
+
+
+class RawDataLoadError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict):
+        super().__init__(message)
+        self.diagnostics = diagnostics or {}
 
 
 def _get_source() -> RepositoryDataSource:
@@ -153,25 +158,62 @@ def get_data_snapshot_info():
 @st.cache_data(ttl=300)
 def load_raw_data():
     """
-    로컬 CSV 우선 로드, 없으면 원격 CSV 로드 (캐싱 적용: 5분)
+    하위 호환용: (order_df, delivery_df)만 반환
+    상세 실패 원인은 load_raw_data_result() 사용
     """
+    result = load_raw_data_result()
+    ord_df, del_df = result["order_df"], result["delivery_df"]
+    if ord_df is None or del_df is None:
+        return None, None
+
+    # 컬럼명 공백 제거
+    ord_df.columns = [str(c).strip() for c in ord_df.columns]
+    del_df.columns = [str(c).strip() for c in del_df.columns]
+    return ord_df, del_df
+
+
+@st.cache_data(ttl=300)
+def load_raw_data_result():
     try:
         ord_df, del_df = load_raw_data_with_source(_get_source())
-
-        # 컬럼명 공백 제거
         ord_df.columns = [str(c).strip() for c in ord_df.columns]
         del_df.columns = [str(c).strip() for c in del_df.columns]
-        
-        return ord_df, del_df
-    
+        return {
+            "ok": True,
+            "order_df": ord_df,
+            "delivery_df": del_df,
+            "error_message": "",
+            "diagnostics": {},
+        }
+    except RawDataLoadError as e:
+        return {
+            "ok": False,
+            "order_df": None,
+            "delivery_df": None,
+            "error_message": str(e),
+            "diagnostics": e.diagnostics,
+        }
     except Exception as e:
-        st.error(f"⚠️ 데이터 로딩 실패: {e}")
-        return None, None
+        return {
+            "ok": False,
+            "order_df": None,
+            "delivery_df": None,
+            "error_message": f"{type(e).__name__}: {e}",
+            "diagnostics": {"unexpected_error": f"{type(e).__name__}: {e}"},
+        }
 
 
 def load_raw_data_with_source(source: RepositoryDataSource):
-    ord_df, _ = source.load_csv_prefer_local(ORDER_CSV_PATH, ORDER_CSV_URL)
-    del_df, _ = source.load_csv_prefer_local(DELIVERY_CSV_PATH, DELIVERY_CSV_URL)
+    ord_df, ord_diag = source.load_csv_with_diagnostics(ORDER_CSV_PATH, ORDER_CSV_URL)
+    del_df, del_diag = source.load_csv_with_diagnostics(DELIVERY_CSV_PATH, DELIVERY_CSV_URL)
     if ord_df is None or del_df is None:
-        raise RuntimeError("order.csv 또는 delivery.csv 로드에 실패했습니다.")
+        diagnostics = {"order": ord_diag, "delivery": del_diag}
+        failed_targets = []
+        if ord_df is None:
+            failed_targets.append("order.csv")
+        if del_df is None:
+            failed_targets.append("delivery.csv")
+        target_text = ", ".join(failed_targets)
+        message = f"{target_text} 로드 실패 (로컬→원격 순으로 시도)"
+        raise RawDataLoadError(message, diagnostics)
     return ord_df, del_df

@@ -4,7 +4,7 @@ from unittest.mock import patch, Mock
 
 import pandas as pd
 
-from data_loader import load_raw_data_with_source
+from data_loader import load_raw_data_with_source, load_raw_data_result
 from services.notifiers import build_telegram_notifier, TelegramNotifier, NoopNotifier
 from uploader.runtime import build_runtime_config
 from services.exception_ops import build_exception_pack
@@ -16,11 +16,29 @@ class _FakeSource:
         self.delivery_df = delivery_df
         self.calls = 0
 
-    def load_csv_prefer_local(self, local_path, remote_url):
+    def load_csv_with_diagnostics(self, local_path, remote_url):
         self.calls += 1
+        diag = {
+            "selected_source": "remote",
+            "local_path": local_path,
+            "remote_url": remote_url,
+            "local_error": None,
+            "remote_error": None,
+        }
         if self.calls == 1:
-            return self.order_df, "remote"
-        return self.delivery_df, "remote"
+            return self.order_df, diag
+        return self.delivery_df, diag
+
+
+class _FailingSource:
+    def load_csv_with_diagnostics(self, local_path, remote_url):
+        return None, {
+            "selected_source": None,
+            "local_path": local_path,
+            "remote_url": remote_url,
+            "local_error": "FileNotFoundError: missing",
+            "remote_error": "HTTPError: 404",
+        }
 
 
 class Stage3ArchTests(unittest.TestCase):
@@ -75,6 +93,40 @@ class Stage3ArchTests(unittest.TestCase):
         pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-10").date(), "m_key": "2026-03"})
         q = pack.get("queue", pd.DataFrame())
         self.assertFalse((q.get("주문번호", pd.Series(dtype=str)).astype(str) == "28-0506955-25-00136").any())
+
+    def test_exception_queue_has_action_columns(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["X-002"],
+                "주문유형": ["정상"],
+                "주문상태": ["배송준비"],
+                "배송상태": ["배송중"],
+                "등록일": ["2026-03-01"],
+                "배송예정일": ["2026-03-02"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-02"]),
+                "배송사_정제": ["수도권"],
+            }
+        )
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-10").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        self.assertIn("원인태그", q.columns)
+        self.assertIn("권장조치", q.columns)
+        self.assertIn("cause_tags", pack)
+        self.assertIn("actions", pack)
+        self.assertIn("center_sla", pack)
+        self.assertIn("capacity_warning", pack)
+        self.assertIn("delay_d1", pack.get("kpi", {}))
+        self.assertIn("delay_d2", pack.get("kpi", {}))
+        self.assertIn("delay_d3p", pack.get("kpi", {}))
+
+    @patch("data_loader._get_source")
+    def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):
+        mock_get_source.return_value = _FailingSource()
+        load_raw_data_result.clear()
+        result = load_raw_data_result()
+        self.assertFalse(result["ok"])
+        self.assertIn("order", result["diagnostics"])
+        self.assertIn("delivery", result["diagnostics"])
 
 
 if __name__ == "__main__":
