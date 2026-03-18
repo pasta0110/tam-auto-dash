@@ -43,14 +43,46 @@ def render(delivery_df, ctx, cache_key=None):
     if (role == "운영자") and (q is None or q.empty):
         st.info("현재 기준 예외 큐가 없습니다.")
     elif role == "운영자":
-        default_limit = 40 if mobile_mode else 80
-        limit = st.slider("표시 건수", min_value=20, max_value=300, value=default_limit, step=20, key="exc_limit")
-        qv = q.head(limit).copy()
-        if mobile_mode:
-            keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
-            if keep_cols:
-                qv = qv[keep_cols]
-        st.dataframe(qv, use_container_width=True, hide_index=True, height=420)
+        default_limit = 20 if mobile_mode else 40
+        limit = st.slider("센터 펼침 시 표시 건수", min_value=10, max_value=200, value=default_limit, step=10, key="exc_limit")
+        center_col = "배송사_정제" if "배송사_정제" in q.columns else None
+
+        if center_col is None:
+            qv = q.head(limit).copy()
+            if mobile_mode:
+                keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
+                if keep_cols:
+                    qv = qv[keep_cols]
+            st.dataframe(qv, use_container_width=True, hide_index=True, height=420)
+        else:
+            summary = (
+                q.groupby(center_col, dropna=False)
+                .agg(
+                    예외건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"),
+                    중대지연건=("리스크구분", lambda s: int(s.astype(str).str.contains("중대지연", na=False).sum())),
+                    평균기준초과=("기준초과영업일", "mean") if "기준초과영업일" in q.columns else ("리스크점수", "mean"),
+                )
+                .reset_index()
+                .rename(columns={center_col: "센터"})
+                .sort_values(["예외건수", "중대지연건"], ascending=[False, False])
+            )
+            if "평균기준초과" in summary.columns:
+                summary["평균기준초과"] = summary["평균기준초과"].round(2)
+
+            st.caption("센터별 요약을 먼저 확인하고, 필요한 센터만 펼쳐서 상세를 보세요.")
+            st.dataframe(summary, use_container_width=True, hide_index=True, height=260)
+
+            for _, row in summary.iterrows():
+                center = row["센터"]
+                cnt = int(row["예외건수"])
+                major = int(row["중대지연건"]) if "중대지연건" in row else 0
+                c_df = q[q[center_col] == center].head(limit).copy()
+                if mobile_mode:
+                    keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in c_df.columns]
+                    if keep_cols:
+                        c_df = c_df[keep_cols]
+                with st.expander(f"{center} | 예외 {cnt}건 | 중대지연 {major}건", expanded=False):
+                    st.dataframe(c_df, use_container_width=True, hide_index=True, height=300)
     elif role in ("센터장", "경영진"):
         top_risk = q.head(20)[["주문번호", "배송예정일", "리스크구분", "배송사_정제", "권장조치"]] if (q is not None and not q.empty) else pd.DataFrame()
         if top_risk.empty:
