@@ -161,6 +161,7 @@ class Stage3ArchTests(unittest.TestCase):
         q = pack.get("queue", pd.DataFrame())
         self.assertIn("지연원인(메세지추정)", q.columns)
         self.assertTrue((q["지연원인(메세지추정)"] == "고객 일정/요청").any())
+        self.assertTrue((q["원인태그"] == "고객 일정/요청").any())
 
     @patch("data_loader._get_source")
     def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):

@@ -151,6 +151,14 @@ def _infer_reason_from_message(message: str) -> str:
     return "기타 운영 이슈"
 
 
+def _final_cause_tag(row: pd.Series) -> str:
+    # 우선순위: 상담메세지 기반 추정 > 상태 기반 추정
+    msg_reason = str(row.get("지연원인(메세지추정)", "") or "").strip()
+    if msg_reason and msg_reason != "메세지 근거 부족":
+        return msg_reason
+    return _cause_tag(row)
+
+
 def _build_person_reason_pack(df: pd.DataFrame) -> tuple[pd.Series, pd.DataFrame]:
     if df.empty:
         return pd.Series(dtype=object), pd.DataFrame(columns=["동일인키", "동일인주문수", "지연원인(메세지추정)", "상담메세지요약"])
@@ -343,6 +351,8 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
             on="동일인키",
             how="left",
         )
+    if "지연원인(메세지추정)" in q.columns:
+        q["원인태그"] = q.apply(_final_cause_tag, axis=1)
 
     q_focus = q.loc[q["기준초과영업일"] >= 1].copy()
 
