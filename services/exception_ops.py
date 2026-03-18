@@ -75,8 +75,24 @@ def _cause_tag(row: pd.Series) -> str:
 
 
 def _recommended_action(row: pd.Series) -> str:
+    # 1) 해피콜 우선 판정
+    happy_flag = str(row.get("해피콜", "") or "").strip().upper()
+    reg_dt = pd.to_datetime(row.get("주문등록일", row.get("등록일", None)), errors="coerce")
+    happy_dt = pd.to_datetime(
+        row.get("해피콜일자", row.get("해피콜일", row.get("해피콜일시", row.get("해피콜등록일", None)))),
+        errors="coerce",
+    )
+    if happy_flag in ("", "N", "NO", "FALSE", "0"):
+        return "해피콜 진행"
+    if happy_flag == "Y":
+        if pd.notna(happy_dt) and pd.notna(reg_dt) and happy_dt >= reg_dt:
+            return "조치없음(고객협의 일정)"
+        return "해피콜 일자 재확인"
+
     risk = str(row.get("리스크구분", "") or "")
     state = str(row.get("주문상태", "") or "")
+    if str(row.get("지연원인(메세지추정)", "") or "").strip() == "고객협의":
+        return "조치없음(고객협의 일정)"
     if "중대지연" in risk:
         if "배송중" in state:
             return "배송사 팀장 콜(30분내 ETA) + 고객 즉시안내 + 재배차 승인요청"
@@ -139,11 +155,12 @@ def _infer_reason_from_message(message: str) -> str:
     if not m:
         return "메세지 근거 부족"
     rules = [
-        ("고객 일정/요청", ["고객요청", "고객 사정", "고객사정", "부재", "시간", "오후", "주말", "재방문", "일정", "조율", "연락"]),
+        ("고객협의", ["이사", "입주", "고객요청", "고객 사정", "고객사정", "부재", "시간", "오후", "주말", "재방문", "일정", "조율", "협의", "동의"]),
+        ("취소/반품 연관", ["취소", "반품", "철회"]),
+        ("판매/상담 이슈", ["판매인", "판매자", "상담", "안내", "설명"]),
         ("주소/연락처 정보 오류", ["주소오류", "주소 불명", "연락처오류", "오기입", "오입력", "번호 오류"]),
         ("재고/출고 지연", ["재고", "입고", "품절", "출고지연", "물류", "창고"]),
         ("설치/배차 지연", ["기사", "설치", "배차", "방문", "스케줄"]),
-        ("취소/반품 연관", ["취소", "반품"]),
     ]
     for label, kws in rules:
         if any(kw in m for kw in kws):
@@ -155,6 +172,8 @@ def _final_cause_tag(row: pd.Series) -> str:
     # 우선순위: 상담메세지 기반 추정 > 상태 기반 추정
     msg_reason = str(row.get("지연원인(메세지추정)", "") or "").strip()
     if msg_reason and msg_reason != "메세지 근거 부족":
+        if msg_reason == "고객협의":
+            return "고객협의"
         return msg_reason
     return _cause_tag(row)
 
@@ -391,6 +410,11 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         "상품명",
         "판매인",
         "담당자",
+        "해피콜",
+        "해피콜일자",
+        "해피콜일",
+        "해피콜일시",
+        "해피콜등록일",
     ]:
         if c in q_focus.columns:
             cols.append(c)
@@ -402,6 +426,15 @@ def build_exception_pack(delivery_df: pd.DataFrame, ctx: dict):
         queue["배송예정일_DT"] = pd.to_datetime(queue["배송예정일_DT"]).dt.strftime("%Y-%m-%d")
         queue = queue.rename(columns={"배송예정일_DT": "배송예정일"})
     queue = queue.sort_values(["리스크점수", "기준초과영업일", "지연일수"], ascending=[False, False, False]).head(300)
+    queue = queue.rename(
+        columns={
+            "정상납기기준(영업일)": "정상납기",
+            "계획리드타임(영업일)": "소요일",
+            "경과영업일(등록→기준일)": "경과일",
+            "기준초과영업일": "납기초과",
+            "초과영업일": "소요일초과",
+        }
+    )
 
     # 원인 분포(권역 중심)
     if "배송사_정제" in q_focus.columns and not q_focus.empty:

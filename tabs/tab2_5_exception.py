@@ -50,7 +50,7 @@ def render(delivery_df, ctx, cache_key=None):
         if center_col is None:
             qv = q.head(limit).copy()
             if mobile_mode:
-                keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
+                keep_cols = [c for c in ["주문번호", "배송예정일", "납기초과", "리스크구분", "원인태그", "권장조치"] if c in qv.columns]
                 if keep_cols:
                     qv = qv[keep_cols]
             st.dataframe(qv, use_container_width=True, hide_index=True, height=420)
@@ -60,7 +60,7 @@ def render(delivery_df, ctx, cache_key=None):
                 .agg(
                     예외건수=("주문번호", "size") if "주문번호" in q.columns else ("리스크점수", "size"),
                     중대지연건=("리스크구분", lambda s: int(s.astype(str).str.contains("중대지연", na=False).sum())),
-                    평균기준초과=("기준초과영업일", "mean") if "기준초과영업일" in q.columns else ("리스크점수", "mean"),
+                    평균기준초과=("납기초과", "mean") if "납기초과" in q.columns else ("리스크점수", "mean"),
                 )
                 .reset_index()
                 .rename(columns={center_col: "센터"})
@@ -78,7 +78,7 @@ def render(delivery_df, ctx, cache_key=None):
                 major = int(row["중대지연건"]) if "중대지연건" in row else 0
                 c_df = q[q[center_col] == center].head(limit).copy()
                 if mobile_mode:
-                    keep_cols = [c for c in ["주문번호", "배송예정일", "기준초과영업일", "리스크구분", "원인태그", "권장조치"] if c in c_df.columns]
+                    keep_cols = [c for c in ["주문번호", "배송예정일", "납기초과", "리스크구분", "원인태그", "권장조치"] if c in c_df.columns]
                     if keep_cols:
                         c_df = c_df[keep_cols]
                 with st.expander(f"{center} | 예외 {cnt}건 | 중대지연 {major}건", expanded=False):
