@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import pandas as pd
 import config
 from utils.date_utils import get_w_days
@@ -154,7 +155,21 @@ def _infer_reason_from_message(message: str) -> str:
     m = str(message or "")
     if not m:
         return "메세지 근거 부족"
+    m_norm = re.sub(r"[^0-9a-z가-힣]+", "", m.lower())
+
+    def _hit(keywords: list[str]) -> bool:
+        raw = m.lower()
+        for kw in keywords:
+            k = str(kw).lower()
+            if k in raw:
+                return True
+            k_norm = re.sub(r"[^0-9a-z가-힣]+", "", k)
+            if k_norm and k_norm in m_norm:
+                return True
+        return False
+
     rules = [
+        ("고객의사 대기", ["컨택하지말", "연락하지말", "고민해본", "고민해본다", "고민해본다고", "보류요청", "보류 요청", "보류", "대기요청"]),
         ("고객협의", ["이사", "입주", "고객요청", "고객 사정", "고객사정", "부재", "시간", "오후", "주말", "재방문", "일정", "조율", "협의", "동의"]),
         ("취소/반품 연관", ["취소", "반품", "철회"]),
         ("판매/상담 이슈", ["판매인", "판매자", "상담", "안내", "설명"]),
@@ -163,7 +178,7 @@ def _infer_reason_from_message(message: str) -> str:
         ("설치/배차 지연", ["기사", "설치", "배차", "방문", "스케줄"]),
     ]
     for label, kws in rules:
-        if any(kw in m for kw in kws):
+        if _hit(kws):
             return label
     return "기타 운영 이슈"
 

@@ -183,6 +183,29 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertTrue((q.loc[q["주문번호"] == "H-N", "권장조치"] == "해피콜 진행").any())
         self.assertTrue((q.loc[q["주문번호"] == "H-Y", "권장조치"] == "조치없음(고객협의 일정)").any())
 
+    def test_customer_intent_wait_classification(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["W-001", "W-002", "W-003"],
+                "주문유형": ["정상", "정상", "정상"],
+                "주문상태": ["배송중", "배송중", "배송준비"],
+                "배송상태": ["배송중", "배송중", "배송중"],
+                "등록일": ["2026-03-01", "2026-03-01", "2026-03-01"],
+                "배송예정일": ["2026-03-15", "2026-03-15", "2026-03-15"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-15", "2026-03-15", "2026-03-15"]),
+                "배송사_정제": ["수도권", "수도권", "대전"],
+                "수취인": ["김철수", "김철수", "이영희"],
+                "주소": ["서울 강남구 역삼동 1", "서울 강남구 역삼동 1", "대전 서구 둔산동 1"],
+                "수취인연락처": ["010-1111-2222", "01011112222", "010-3333-4444"],
+                "상담메세지": ["컨택하지말라고 함", "조금더 고민해본다고 함", "빠른설치부탁드립니다 | 보류요청"],
+            }
+        )
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-12").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        matched = q["지연원인(메세지추정)"] == "고객의사 대기"
+        self.assertTrue(matched.any())
+        self.assertTrue((q.loc[matched, "원인태그"] == "고객의사 대기").all())
+
     @patch("data_loader._get_source")
     def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):
         mock_get_source.return_value = _FailingSource()
