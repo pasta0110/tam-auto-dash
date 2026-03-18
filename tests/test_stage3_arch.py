@@ -294,6 +294,28 @@ class Stage3ArchTests(unittest.TestCase):
         self.assertTrue((q["지연원인(메세지추정)"] == "고객협의").any())
         self.assertTrue((q["지연원인(메세지추정)"] == "고객협의(일정변경)").any())
 
+    def test_down_service_note_is_non_schedule(self):
+        df = pd.DataFrame(
+            {
+                "주문번호": ["DS-001"],
+                "주문유형": ["정상"],
+                "주문상태": ["배송준비"],
+                "배송상태": ["배송중"],
+                "등록일": ["2026-03-01"],
+                "배송예정일": ["2026-03-15"],
+                "배송예정일_DT": pd.to_datetime(["2026-03-15"]),
+                "배송사_정제": ["수도권"],
+                "수취인": ["홍길동"],
+                "주소": ["서울 강남구 테헤란로 1"],
+                "수취인연락처": ["010-1234-5678"],
+                "상담메세지": ["기존제품 내림서비스, 밖으로만내어놔주세요 / 폐기"],
+            }
+        )
+        pack = build_exception_pack(df, {"yesterday": pd.Timestamp("2026-03-12").date(), "m_key": "2026-03"})
+        q = pack.get("queue", pd.DataFrame())
+        self.assertTrue((q["지연원인(메세지추정)"] == "일정무관(시공서비스)").any())
+        self.assertFalse((q["원인태그"] == "일정무관(시공서비스)").any())
+
     @patch("data_loader._get_source")
     def test_load_raw_data_result_returns_diagnostics(self, mock_get_source):
         mock_get_source.return_value = _FailingSource()
