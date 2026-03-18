@@ -169,6 +169,8 @@ def _infer_reason_from_message(message: str) -> str:
         return False
 
     rules = [
+        ("일정무관(전자서명)", ["전자동의", "전자 동의", "전자서명동의", "전자 서명 동의"]),
+        ("일정무관(판매조건)", ["특별판매", "일시불", "렌탈", "약정", "할부"]),
         ("고객의사 대기", ["컨택하지말", "연락하지말", "고민해본", "고민해본다", "고민해본다고", "보류요청", "보류 요청", "보류", "대기요청"]),
         ("고객협의", ["이사", "입주", "고객요청", "고객 사정", "고객사정", "부재", "시간", "오후", "주말", "재방문", "일정", "조율", "협의", "동의"]),
         ("취소/반품 연관", ["취소", "반품", "철회"]),
@@ -186,6 +188,8 @@ def _infer_reason_from_message(message: str) -> str:
 def _final_cause_tag(row: pd.Series) -> str:
     # 우선순위: 상담메세지 기반 추정 > 상태 기반 추정
     msg_reason = str(row.get("지연원인(메세지추정)", "") or "").strip()
+    if msg_reason in ("일정무관(전자서명)", "일정무관(판매조건)"):
+        return _cause_tag(row)
     if msg_reason and msg_reason != "메세지 근거 부족":
         if msg_reason == "고객협의":
             return "고객협의"
