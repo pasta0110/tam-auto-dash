@@ -168,12 +168,32 @@ def _infer_reason_from_message(message: str) -> str:
                 return True
         return False
 
+    def _is_contract_term_note(text: str) -> bool:
+        t = str(text or "").lower()
+        if not t:
+            return False
+        # 계약/조건 메모로 자주 쓰는 키워드
+        contract_kw = [
+            "연락후", "계좌완", "핸본인", "본인", "의", "반환", "소모",
+            "점검", "개월", "연체", "총", "대", "위", "특별판매", "일시불", "렌탈",
+        ]
+        kw_hit = sum(1 for kw in contract_kw if kw in t)
+        # 숫자/기호 기반 조건 토큰(예: P(72-4), 의72, 위10%, 연체6%)
+        token_pat = re.compile(r"(?:[a-z]\(\d{1,3}-\d{1,3}\)|의\d{1,3}|위\d{1,3}%|연체\d{1,3}%|반환\d{1,3}|\d+개월|총\d+대)")
+        token_hits = len(token_pat.findall(t))
+        slash_density = t.count("/") >= 3
+        # 키워드+토큰이 함께 있거나, 슬래시 조합 메모가 많은 경우 계약조건 메모로 간주
+        return (kw_hit >= 2 and token_hits >= 1) or (token_hits >= 2) or (kw_hit >= 3 and slash_density)
+
     # ★ 처리이력 표기(방문/교환/반품/전산매변 등)는 일정 사유가 아닌 이력 메모로 간주
     has_star_marker = any(x in m for x in ["★", "☆", "※"])
     if has_star_marker and _hit(["방문", "교환", "반품", "전산매변", "매변", "매출상태변경", "상태변경"]):
         return "일정무관(처리이력)"
+    if _is_contract_term_note(m):
+        return "일정무관(계약조건)"
 
     rules = [
+        ("일정무관(계약조건)", ["연락후", "계좌완", "핸본인", "반환", "점검", "연체", "총", "개월"]),
         ("일정무관(처리이력)", ["전산매변", "매출상태변경", "상태변경"]),
         ("일정무관(전자서명)", ["전자동의", "전자 동의", "전자서명동의", "전자 서명 동의"]),
         ("일정무관(판매조건)", ["특별판매", "일시불", "렌탈", "약정", "할부"]),
@@ -194,7 +214,7 @@ def _infer_reason_from_message(message: str) -> str:
 def _final_cause_tag(row: pd.Series) -> str:
     # 우선순위: 상담메세지 기반 추정 > 상태 기반 추정
     msg_reason = str(row.get("지연원인(메세지추정)", "") or "").strip()
-    if msg_reason in ("일정무관(전자서명)", "일정무관(판매조건)", "일정무관(처리이력)"):
+    if msg_reason in ("일정무관(전자서명)", "일정무관(판매조건)", "일정무관(처리이력)", "일정무관(계약조건)"):
         return _cause_tag(row)
     if msg_reason and msg_reason != "메세지 근거 부족":
         if msg_reason == "고객협의":
