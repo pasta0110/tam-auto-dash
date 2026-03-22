@@ -2,8 +2,8 @@
   "ok": true,
   "exit_code": 0,
   "message": "Prepared upload (before commit)",
-  "updated_at_kst": "2026-03-22 23:07:15 KST",
-  "log_file": "C:\\Users\\alcls\\Documents\\tam-auto-dash\\logs\\uploader_20260322.log",
+  "updated_at_kst": "2026-03-23 00:07:22 KST",
+  "log_file": "C:\\Users\\alcls\\Documents\\tam-auto-dash\\logs\\uploader_20260323.log",
   "consecutive_failures": 0,
   "phase": "pre_commit"
 }
