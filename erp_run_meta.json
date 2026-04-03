@@ -1,12 +1,12 @@
 {
-  "extracted_at_kst": "2026-04-03 13:00:12 KST",
-  "order_rows": 36961,
-  "delivery_rows": 51796,
-  "order_sha256": "a007c8a35cb9703f443c214c67f458edbc1381a4e7db27e09d96842ec639b6e3",
-  "delivery_sha256": "961425b374ee72d1bc18e7beb8f0ef097c151cc44ee15e76219b5f772ba2c518",
+  "extracted_at_kst": "2026-04-03 14:00:12 KST",
+  "order_rows": 36967,
+  "delivery_rows": 51802,
+  "order_sha256": "bce2b15eb4c6eb57126b32d17cd49a8d23d89d4eb28a44843b345eedf8c5c4e5",
+  "delivery_sha256": "b14a5a595d7b08a80b1a6dd7aaa610f95b9176329f15ae794fd0d6be97697856",
   "order_target_max_rows": 40000,
   "order_selected_months": 10,
   "order_window_from": "2025-07-01",
   "order_window_to": "2025-07-31",
-  "commit_at_kst": "2026-04-03 13:01:00 KST"
+  "commit_at_kst": "2026-04-03 14:00:59 KST"
 }
