@@ -10,6 +10,7 @@ from utils.date_utils import get_w_days
 
 def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -> tuple[list[dict], dict]:
     yesterday = ctx["yesterday"]
+    today = ctx.get("today", datetime.date.today())
     m_key = ctx["m_key"]
     m_start = ctx["m_start"]
     m_end = ctx["m_end"]
@@ -24,6 +25,27 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         & (ana_df["배송예정일_DT"] <= pd.to_datetime(yesterday))
     ]
     recent_working_days = get_w_days(last_30_days_start, yesterday)
+
+    # 탭4와 동일한 관점: 조회일(today)의 "일자"를 선택월(m_key)에 투영해 영업일차 계산
+    day_in_month = min(today.day, m_end.day)
+    query_day_date = datetime.date(m_start.year, m_start.month, day_in_month)
+    query_working_day_num = int(get_w_days(m_start, query_day_date))
+    query_working_day_num = max(1, min(24, query_working_day_num))
+
+    # 역대 동일 영업일차 평균 정확도(현재 검증월 제외)
+    hist_df = build_historical_day_trend(
+        ana_df,
+        query_working_day_num,
+        month_from="2025-05",
+        month_to_exclusive=m_key,
+    )
+    historical_accuracy = float(hist_df["정확도(%)"].mean()) if not hist_df.empty else None
+    acc_ratio = (historical_accuracy / 100.0) if historical_accuracy and historical_accuracy > 0 else None
+
+    def _adjust_prediction(raw_pred: int) -> int:
+        if not acc_ratio:
+            return int(raw_pred)
+        return int(round(raw_pred / acc_ratio))
 
     sum_curr, sum_avg, sum_remain, sum_total = 0, 0.0, 0, 0
     sum_today_inc = 0
@@ -47,6 +69,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         avg_30d = v_recent_count / recent_working_days if recent_working_days > 0 else 0
         rem_pred = int(avg_30d * remain_w)
         projected = curr_act + rem_pred
+        final_pred = _adjust_prediction(projected)
 
         sum_curr += curr_act
         sum_today_inc += today_inc
@@ -60,21 +83,30 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
                 "현재 실적(당월)": f"{curr_act} 건 (오늘 {today_inc}건 ↑)",
                 "최근 30일 평균": f"{avg_30d:.1f} 건/일",
                 f"남은 영업일 예상({remain_w}일)": f"{rem_pred} 건",
-                "당월 최종 예측": f"{projected} 건",
+                "당월 예측": f"{projected} 건",
+                "최종 예측": f"{final_pred} 건",
             }
         )
 
+    final_sum_total = _adjust_prediction(sum_total)
     pred_rows.append(
         {
             "배송사": "📌 합계",
             "현재 실적(당월)": f"{sum_curr} 건 (오늘 {sum_today_inc}건 ↑)",
             "최근 30일 평균": f"{sum_avg:.1f} 건/일",
             f"남은 영업일 예상({remain_w}일)": f"{sum_remain} 건",
-            "당월 최종 예측": f"{sum_total} 건",
+            "당월 예측": f"{sum_total} 건",
+            "최종 예측": f"{final_sum_total} 건",
         }
     )
 
-    meta = {"recent_working_days": recent_working_days, "remain_w": remain_w}
+    meta = {
+        "recent_working_days": recent_working_days,
+        "remain_w": remain_w,
+        "query_working_day_num": query_working_day_num,
+        "historical_accuracy": historical_accuracy,
+        "historical_months": len(hist_df),
+    }
     return pred_rows, meta
 
 
