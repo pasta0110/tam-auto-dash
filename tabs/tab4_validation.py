@@ -7,7 +7,6 @@ import datetime
 import plotly.express as px
 from config import V_ORDER
 from services.prediction_ops import simulate_month_prediction, build_historical_day_trend, build_master_golden_summary
-from utils.date_utils import get_w_days
 
 
 def _auto_working_day_for_month(month_key: str, today_kst: datetime.date) -> int:
@@ -24,7 +23,9 @@ def _auto_working_day_for_month(month_key: str, today_kst: datetime.date) -> int
 
     day_in_month = min(today_kst.day, month_end.day)
     ref_date = datetime.date(y, m, day_in_month)
-    auto_day = int(get_w_days(month_start, ref_date))
+    # 탭4 기준일은 월~토(일요일 제외) 기준으로 계산한다.
+    days = pd.date_range(month_start, ref_date)
+    auto_day = int(len([d for d in days if d.weekday() != 6]))
     return max(1, min(24, auto_day))
 
 def render(ana_df, ctx, cache_key=None):
