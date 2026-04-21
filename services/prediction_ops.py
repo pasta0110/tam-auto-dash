@@ -84,11 +84,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
                 "최근 30일 평균": f"{avg_30d:.1f} 건/일",
                 f"남은 영업일 예상({remain_w}일)": f"{rem_pred} 건",
                 "당월 예측": f"{projected} 건",
-                "최종 예측": (
-                    f"{final_pred} 건"
-                    if not historical_accuracy
-                    else f"{final_pred} 건 (역대 {query_working_day_num}영업일 평균 정확도 {historical_accuracy:.1f}%)"
-                ),
+                "최종 예측": f"{final_pred} 건",
             }
         )
 
@@ -100,11 +96,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
             "최근 30일 평균": f"{sum_avg:.1f} 건/일",
             f"남은 영업일 예상({remain_w}일)": f"{sum_remain} 건",
             "당월 예측": f"{sum_total} 건",
-            "최종 예측": (
-                f"{final_sum_total} 건"
-                if not historical_accuracy
-                else f"{final_sum_total} 건 (역대 {query_working_day_num}영업일 평균 정확도 {historical_accuracy:.1f}%)"
-            ),
+            "최종 예측": f"{final_sum_total} 건",
         }
     )
 

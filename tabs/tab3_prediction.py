@@ -34,8 +34,24 @@ def render(ana_df, ctx, cache_key=None):
     
     st.subheader("📍 지역별 출고 예측")
     pred_df = pd.DataFrame(pred_rows).set_index('배송사')
+    hist_acc = meta.get("historical_accuracy")
+    if hist_acc:
+        pred_df = pred_df.rename(
+            columns={
+                "당월 예측": f"당월 예측 (정확도 {hist_acc:.1f}%)",
+                "최종 예측": "최종 예측 (정확도 100%)",
+            }
+        )
+    else:
+        pred_df = pred_df.rename(
+            columns={
+                "당월 예측": "당월 예측 (정확도 -)",
+                "최종 예측": "최종 예측 (정확도 100%)",
+            }
+        )
+
     if mobile_mode:
-        keep_cols = [c for c in ["현재 실적(당월)", "당월 예측", "최종 예측"] if c in pred_df.columns]
+        keep_cols = [c for c in pred_df.columns if c.startswith("현재 실적(당월)") or c.startswith("당월 예측") or c.startswith("최종 예측")]
         if keep_cols:
             pred_df = pred_df[keep_cols]
         st.dataframe(pred_df, use_container_width=True, height=360)
