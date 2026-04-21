@@ -7,6 +7,25 @@ import datetime
 import plotly.express as px
 from config import V_ORDER
 from services.prediction_ops import simulate_month_prediction, build_historical_day_trend, build_master_golden_summary
+from utils.date_utils import get_w_days
+
+
+def _auto_working_day_for_month(month_key: str, today_kst: datetime.date) -> int:
+    """
+    선택 월 기준으로 '조회일(today_kst)의 일자'에 해당하는 영업일차를 계산한다.
+    예) 오늘이 22일이면, 선택 월의 22일까지 영업일 수를 기준일로 사용.
+    """
+    y, m = map(int, str(month_key).split("-"))
+    month_start = datetime.date(y, m, 1)
+    if m == 12:
+        month_end = datetime.date(y, 12, 31)
+    else:
+        month_end = datetime.date(y, m + 1, 1) - datetime.timedelta(days=1)
+
+    day_in_month = min(today_kst.day, month_end.day)
+    ref_date = datetime.date(y, m, day_in_month)
+    auto_day = int(get_w_days(month_start, ref_date))
+    return max(1, min(24, auto_day))
 
 def render(ana_df, ctx, cache_key=None):
     st.title("🔍 예측 모델 검증 및 골든 데이 분석")
@@ -19,8 +38,19 @@ def render(ana_df, ctx, cache_key=None):
     
     with c1:
         sel_month_key = st.selectbox("📅 검증 대상 월 선택", available_months, index=default_idx, key="v_month_sel")
+    # 시뮬레이션 기준일을 '조회하는 날' 기준 영업일차로 자동 반영
+    today_kst = ctx.get("today", datetime.date.today())
+    auto_day_num = _auto_working_day_for_month(str(sel_month_key), today_kst)
+    st.session_state["v_day_num"] = int(auto_day_num)
+
     with c2:
-        sel_day_num = st.number_input("📅 시뮬레이션 기준일 (영업일)", min_value=1, max_value=20, value=3, key="v_day_num")
+        sel_day_num = st.number_input(
+            "📅 시뮬레이션 기준일 (영업일)",
+            min_value=1,
+            max_value=24,
+            value=int(auto_day_num),
+            key="v_day_num",
+        )
     with c3:
         st.info(f"💡 **분석 시나리오:** {sel_month_key}월의 **{sel_day_num}영업일차** 시점 예측치 분석")
         
