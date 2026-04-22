@@ -162,7 +162,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
     elif selected_view == "🔍 4. 예측 모델 검증":
         tab4_validation.render(ana_df, ctx, cache_key=cache_key)
     elif selected_view == "🛠 6. 사용기록 관리" and auth_ctx.get("role") == "admin":
-        tab6_access_logs.render()
+        tab6_access_logs.render(auth_ctx=auth_ctx)
     else:
         tab5_map.render(ana_df, cache_key=cache_key)
     perf["selected_tab_render_sec"] = round(time.perf_counter() - t_tab, 4)
