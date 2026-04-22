@@ -775,8 +775,8 @@ def enforce_auth_gate() -> None:
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
     st.markdown(
         f"""
-        <a href="{login_url}" target="_self" style="text-decoration:none;">
-          <div style="
+        <form action="{login_url}" method="get" target="_self" style="margin:0;">
+          <button type="submit" style="
             width:100%;
             text-align:center;
             padding:0.6rem 0.8rem;
@@ -786,15 +786,15 @@ def enforce_auth_gate() -> None:
             color:#31333F;
             background:#ffffff;
             cursor:pointer;
-          ">카카오계정으로 로그인 (권장)</div>
-        </a>
+          ">카카오계정으로 로그인 (권장)</button>
+        </form>
         """,
         unsafe_allow_html=True,
     )
     st.markdown(
         f"""
-        <a href="{login_url_default}" target="_self" style="text-decoration:none;">
-          <div style="
+        <form action="{login_url_default}" method="get" target="_self" style="margin-top:0.45rem;">
+          <button type="submit" style="
             width:100%;
             text-align:center;
             padding:0.45rem 0.8rem;
@@ -803,10 +803,9 @@ def enforce_auth_gate() -> None:
             font-size:0.92rem;
             color:#6b7280;
             background:#f9fafb;
-            margin-top:0.45rem;
             cursor:pointer;
-          ">대체 경로로 로그인</div>
-        </a>
+          ">대체 경로로 로그인</button>
+        </form>
         """,
         unsafe_allow_html=True,
     )
