@@ -21,6 +21,7 @@ SESSION_AUTH_UNTIL = "auth_until"
 SESSION_OAUTH_STATE = "auth_oauth_state"
 SESSION_PENDING_USER = "auth_pending_user"
 SESSION_PIN_ATTEMPTS = "auth_pin_attempts"
+SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
 
 
 def _sget(key: str, default: Any = "") -> Any:
@@ -80,6 +81,25 @@ def _notify(event: str, detail: str) -> None:
     if not token or not chat_id:
         return
     notifier.send(f"🔐 인증로그 [{event}]\n{detail}")
+
+
+def _notify_whitelist_request_once(user: dict[str, str]) -> None:
+    uid = (user.get("id") or "").strip()
+    if not uid:
+        return
+    if st.session_state.get(SESSION_WHITELIST_ALERTED_UID) == uid:
+        return
+    st.session_state[SESSION_WHITELIST_ALERTED_UID] = uid
+    detail = (
+        "미승인 계정 로그인 시도\n"
+        f"kakao_id={uid}\n"
+        f"nickname={user.get('nickname','-')}\n"
+        f"email={user.get('email','-')}\n"
+        f"{_client_meta()}\n\n"
+        "승인 방법(secrets):\n"
+        f'AUTH_KAKAO_WHITELIST_IDS = ["{uid}", ...]'
+    )
+    _notify("approve_request", detail)
 
 
 def _settings() -> dict[str, Any]:
@@ -242,11 +262,13 @@ def enforce_auth_gate() -> None:
             st.stop()
 
         if not _is_whitelisted(user, cfg["whitelist_ids"], cfg["whitelist_emails"]):
+            _notify_whitelist_request_once(user)
             st.error(
                 "화이트리스트에 없는 계정입니다.\n"
                 f"카카오ID: {user.get('id','-')} / 닉네임: {user.get('nickname','-')}\n"
                 "이 ID를 AUTH_KAKAO_WHITELIST_IDS에 추가하세요."
             )
+            st.code(f'AUTH_KAKAO_WHITELIST_IDS = ["{user.get("id","")}", ...]', language="toml")
             _notify("whitelist_denied", f"user={user}\n{_client_meta()}")
             st.stop()
 
