@@ -88,7 +88,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
     order_df, delivery_df, ana_df = payload["order_df"], payload["delivery_df"], payload["ana_df"]
     cache_key = f"{expected_meta.get('schema')}|{expected_meta.get('order_sig')}|{expected_meta.get('delivery_sig')}|{expected_meta.get('order_sha256')}|{expected_meta.get('delivery_sha256')}"
 
-    # 5. 메인 UI 구성 (선택된 화면만 실행)
+    # 5. 메인 UI 구성 (사이드바 메뉴에서 선택된 화면만 실행)
     views = [
         "📋 1. 종합 현황",
         "📌 1.5 인사이트",
@@ -98,7 +98,15 @@ if raw_order_df is not None and raw_delivery_df is not None:
         "🔍 4. 예측 모델 검증",
         "📍 5. 배송 지도",
     ]
-    selected_view = st.radio("메뉴", views, horizontal=True, label_visibility="collapsed", key="main_view")
+    with st.sidebar:
+        st.markdown("### 메뉴")
+        selected_view = st.radio(
+            "메뉴",
+            views,
+            index=0,
+            label_visibility="collapsed",
+            key="main_view",
+        )
 
     t_tab = time.perf_counter()
     if selected_view == views[0]:
