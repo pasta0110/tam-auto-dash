@@ -773,41 +773,10 @@ def enforce_auth_gate() -> None:
 
     st.title("🔐 보안 로그인")
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
-    st.markdown(
-        f"""
-        <form action="{login_url}" method="get" target="_self" style="margin:0;">
-          <button type="submit" style="
-            width:100%;
-            text-align:center;
-            padding:0.6rem 0.8rem;
-            border:1px solid rgba(49,51,63,0.2);
-            border-radius:0.5rem;
-            font-weight:600;
-            color:#31333F;
-            background:#ffffff;
-            cursor:pointer;
-          ">카카오계정으로 로그인 (권장)</button>
-        </form>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f"""
-        <form action="{login_url_default}" method="get" target="_self" style="margin-top:0.45rem;">
-          <button type="submit" style="
-            width:100%;
-            text-align:center;
-            padding:0.45rem 0.8rem;
-            border:1px dashed rgba(49,51,63,0.25);
-            border-radius:0.5rem;
-            font-size:0.92rem;
-            color:#6b7280;
-            background:#f9fafb;
-            cursor:pointer;
-          ">대체 경로로 로그인</button>
-        </form>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.link_button("카카오계정으로 로그인 (권장)", login_url, use_container_width=True)
+    st.link_button("대체 경로로 로그인", login_url_default, use_container_width=True)
+    st.caption("버튼이 반응하지 않으면 아래 링크를 길게 눌러 새 탭에서 열어주세요.")
+    st.markdown(f"[권장 로그인 링크 직접 열기]({login_url})")
+    st.markdown(f"[대체 로그인 링크 직접 열기]({login_url_default})")
     st.caption("로그인 후 화이트리스트 + PIN 인증을 통과해야 대시보드가 열립니다.")
     st.stop()
