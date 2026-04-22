@@ -13,16 +13,20 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
+from services.access_log import append_access_log
 from services.notifiers import build_telegram_notifier
 
 
 SESSION_AUTH = "auth_ok"
 SESSION_AUTH_USER = "auth_user"
 SESSION_AUTH_UNTIL = "auth_until"
+SESSION_AUTH_ROLE = "auth_role"
+SESSION_AUTH_SID = "auth_sid"
 SESSION_OAUTH_STATE = "auth_oauth_state"
 SESSION_PENDING_USER = "auth_pending_user"
 SESSION_PIN_ATTEMPTS = "auth_pin_attempts"
 SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
+SESSION_ACCESS_LOGGED = "auth_access_logged"
 
 
 def _sget(key: str, default: Any = "") -> Any:
@@ -73,6 +77,21 @@ def _client_meta() -> str:
     except Exception:
         pass
     return f"ip={ip}, ua={ua[:120]}"
+
+
+def _client_meta_dict() -> dict[str, str]:
+    ip = "-"
+    ua = "-"
+    try:
+        headers = getattr(st.context, "headers", None)
+        if headers:
+            xff = headers.get("x-forwarded-for", "")
+            if xff:
+                ip = xff.split(",")[0].strip()
+            ua = headers.get("user-agent", "-")
+    except Exception:
+        pass
+    return {"ip": ip, "ua": ua[:500]}
 
 
 def _notify(event: str, detail: str) -> None:
@@ -193,8 +212,13 @@ def _settings() -> dict[str, Any]:
         "redirect_uri": str(_sget("AUTH_KAKAO_REDIRECT_URI", "")).strip(),
         "whitelist_ids": set(_to_list(_sget("AUTH_KAKAO_WHITELIST_IDS", []))),
         "whitelist_emails": set(x.lower() for x in _to_list(_sget("AUTH_KAKAO_WHITELIST_EMAILS", []))),
-        "pin_code": str(_sget("AUTH_PIN_CODE", "")).strip(),
-        "pin_sha256": str(_sget("AUTH_PIN_SHA256", "")).strip().lower(),
+        "admin_ids": set(_to_list(_sget("AUTH_ADMIN_KAKAO_IDS", []))),
+        "admin_emails": set(x.lower() for x in _to_list(_sget("AUTH_ADMIN_KAKAO_WHITELIST_EMAILS", []))),
+        # 요청 기본값: 일반 351037, 관리자 144883
+        "pin_user_code": str(_sget("AUTH_PIN_USER_CODE", _sget("AUTH_PIN_CODE", "351037"))).strip(),
+        "pin_user_sha256": str(_sget("AUTH_PIN_USER_SHA256", _sget("AUTH_PIN_SHA256", ""))).strip().lower(),
+        "pin_admin_code": str(_sget("AUTH_PIN_ADMIN_CODE", "144883")).strip(),
+        "pin_admin_sha256": str(_sget("AUTH_PIN_ADMIN_SHA256", "")).strip().lower(),
         "pin_max_attempts": max(1, _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5)),
         "session_minutes": session_minutes,
         "state_secret": str(_sget("AUTH_STATE_SECRET", "")).strip(),
@@ -291,6 +315,14 @@ def _is_whitelisted(user: dict[str, str], ids: set[str], emails: set[str]) -> bo
     return (uid and uid in ids) or (email and email in emails)
 
 
+def _get_role(user: dict[str, str], admin_ids: set[str], admin_emails: set[str]) -> str:
+    uid = user.get("id", "")
+    email = user.get("email", "").lower()
+    if (uid and uid in admin_ids) or (email and email in admin_emails):
+        return "admin"
+    return "user"
+
+
 def _verify_pin(pin_input: str, pin_code: str, pin_sha256: str) -> bool:
     pin_input = (pin_input or "").strip()
     if not pin_input:
@@ -303,7 +335,16 @@ def _verify_pin(pin_input: str, pin_code: str, pin_sha256: str) -> bool:
 
 
 def _clear_auth() -> None:
-    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_PENDING_USER, SESSION_PIN_ATTEMPTS]:
+    for k in [
+        SESSION_AUTH,
+        SESSION_AUTH_USER,
+        SESSION_AUTH_UNTIL,
+        SESSION_AUTH_ROLE,
+        SESSION_AUTH_SID,
+        SESSION_PENDING_USER,
+        SESSION_PIN_ATTEMPTS,
+        SESSION_ACCESS_LOGGED,
+    ]:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -311,9 +352,62 @@ def _clear_auth() -> None:
 def _clear_auth_runtime_only() -> None:
     # 콜백 직후 PIN 대기 상태(SESSION_PENDING_USER)는 유지해야 하므로
     # 루프 방지를 위해 pending을 제외한 런타임 인증 정보만 정리한다.
-    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_PIN_ATTEMPTS]:
+    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED]:
         if k in st.session_state:
             del st.session_state[k]
+
+
+def get_auth_context() -> dict[str, Any]:
+    return {
+        "ok": bool(st.session_state.get(SESSION_AUTH)),
+        "user": st.session_state.get(SESSION_AUTH_USER) or {},
+        "role": str(st.session_state.get(SESSION_AUTH_ROLE, "user")),
+        "sid": str(st.session_state.get(SESSION_AUTH_SID, "")),
+        "until": float(st.session_state.get(SESSION_AUTH_UNTIL, 0) or 0),
+    }
+
+
+def render_watermark_overlay() -> None:
+    ctx = get_auth_context()
+    if not ctx["ok"]:
+        return
+    user = ctx["user"] or {}
+    role = ctx["role"]
+    sid = ctx["sid"] or "-"
+    uid = user.get("id", "-")
+    nick = user.get("nickname", "-")
+    txt = f"내부전용 | {role} | {nick}({uid}) | sid:{sid} | 외부공유 금지"
+    safe_txt = txt.replace("'", "\\'")
+    html = f"""
+    <style>
+    .wm-grid {{
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0.08;
+      font-size: 14px;
+      color: #111827;
+      transform: rotate(-18deg);
+      transform-origin: center;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      row-gap: 84px;
+      column-gap: 48px;
+      padding: 80px 24px;
+    }}
+    .wm-item {{
+      white-space: nowrap;
+    }}
+    </style>
+    <div class="wm-grid">
+      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+    </div>
+    """
+    components.html(html, height=0)
 
 
 def enforce_auth_gate() -> None:
@@ -325,6 +419,8 @@ def enforce_auth_gate() -> None:
     q_force = str(st.query_params.get("force_logout", "")).strip() == "1"
     q_extend = str(st.query_params.get("extend_session", "")).strip() == "1"
     if q_force:
+        if st.session_state.get(SESSION_AUTH_USER):
+            append_access_log("session_expired_logout", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
         _clear_auth()
         try:
             st.query_params.clear()
@@ -333,6 +429,7 @@ def enforce_auth_gate() -> None:
         st.rerun()
     if q_extend and st.session_state.get(SESSION_AUTH):
         st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
         _notify("session_extended", _client_meta())
         try:
             st.query_params.clear()
@@ -343,11 +440,24 @@ def enforce_auth_gate() -> None:
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
+        if not st.session_state.get(SESSION_ACCESS_LOGGED):
+            append_access_log(
+                "dashboard_access",
+                user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
+                meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")},
+            )
+            st.session_state[SESSION_ACCESS_LOGGED] = True
         with st.sidebar:
             st.caption(f"🔐 로그인: {user.get('nickname') or user.get('email') or user.get('id')}")
+            st.caption(f"🛡 권한: {'관리자' if st.session_state.get(SESSION_AUTH_ROLE) == 'admin' else '일반'}")
             render_live_session_countdown(st.session_state.get(SESSION_AUTH_UNTIL, 0), label="⏱ 세션")
             render_session_popup_and_autologout(st.session_state.get(SESSION_AUTH_UNTIL, 0))
             if st.button("로그아웃", key="auth_logout_btn"):
+                append_access_log(
+                    "logout",
+                    user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
+                    meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")},
+                )
                 _clear_auth()
                 _notify("logout", _client_meta())
                 st.rerun()
@@ -375,6 +485,7 @@ def enforce_auth_gate() -> None:
 
         if not _is_whitelisted(user, cfg["whitelist_ids"], cfg["whitelist_emails"]):
             _notify_whitelist_request_once(user)
+            append_access_log("whitelist_denied", user=user, meta={**_client_meta_dict(), "detail": "not in whitelist"})
             st.error(
                 "화이트리스트에 없는 계정입니다.\n"
                 f"카카오ID: {user.get('id','-')} / 닉네임: {user.get('nickname','-')}\n"
@@ -384,7 +495,8 @@ def enforce_auth_gate() -> None:
             _notify("whitelist_denied", f"user={user}\n{_client_meta()}")
             st.stop()
 
-        st.session_state[SESSION_PENDING_USER] = user
+        role = _get_role(user, cfg["admin_ids"], cfg["admin_emails"])
+        st.session_state[SESSION_PENDING_USER] = {**user, "role": role}
         try:
             st.query_params.clear()
         except Exception:
@@ -397,13 +509,18 @@ def enforce_auth_gate() -> None:
         st.title("🔐 2차 인증(PIN)")
         st.info("카카오 인증이 완료되었습니다. PIN을 입력해주세요.")
 
-        if not (cfg["pin_code"] or cfg["pin_sha256"]):
-            st.error("PIN 설정이 없습니다. `AUTH_PIN_CODE` 또는 `AUTH_PIN_SHA256`를 설정하세요.")
+        role = str((pending or {}).get("role", "user"))
+        pin_code = cfg["pin_admin_code"] if role == "admin" else cfg["pin_user_code"]
+        pin_sha256 = cfg["pin_admin_sha256"] if role == "admin" else cfg["pin_user_sha256"]
+
+        if not (pin_code or pin_sha256):
+            st.error("PIN 설정이 없습니다. AUTH_PIN_USER_CODE / AUTH_PIN_ADMIN_CODE(또는 *_SHA256)를 설정하세요.")
             st.stop()
 
         attempts = int(st.session_state.get(SESSION_PIN_ATTEMPTS, 0))
         if attempts >= cfg["pin_max_attempts"]:
             st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
+            append_access_log("pin_locked", user=pending, meta={**_client_meta_dict()})
             _notify("pin_locked", f"user={pending}\n{_client_meta()}")
             st.stop()
 
@@ -419,13 +536,18 @@ def enforce_auth_gate() -> None:
             st.rerun()
 
         if verify:
-            if _verify_pin(pin_input, cfg["pin_code"], cfg["pin_sha256"]):
+            if _verify_pin(pin_input, pin_code, pin_sha256):
+                sid = secrets.token_hex(4)
                 st.session_state[SESSION_AUTH] = True
                 st.session_state[SESSION_AUTH_USER] = pending
+                st.session_state[SESSION_AUTH_ROLE] = role
+                st.session_state[SESSION_AUTH_SID] = sid
                 st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
+                st.session_state[SESSION_ACCESS_LOGGED] = False
                 if SESSION_PENDING_USER in st.session_state:
                     del st.session_state[SESSION_PENDING_USER]
+                append_access_log("login_success", user={**pending, "role": role}, meta={**_client_meta_dict(), "sid": sid})
                 _notify("login_success", f"user={pending}\n{_client_meta()}")
                 st.rerun()
             else:
@@ -435,6 +557,7 @@ def enforce_auth_gate() -> None:
                     st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
                 else:
                     st.error(f"PIN 불일치 (남은 시도: {left})")
+                append_access_log("pin_failed", user=pending, meta={**_client_meta_dict(), "detail": f"remain={left}"})
                 _notify("pin_failed", f"user={pending}\nremain={left}\n{_client_meta()}")
         st.stop()
 

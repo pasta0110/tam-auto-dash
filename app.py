@@ -10,13 +10,13 @@ from services.app_runtime import (
     build_caption_parts,
     notify_integrity_mismatch_once,
 )
-from services.auth_security import enforce_auth_gate
+from services.auth_security import enforce_auth_gate, get_auth_context, render_watermark_overlay
 from services.app_contract import run_contract_gate
 from services.app_processed import get_processed_payload, ensure_payload_computed
 from services.app_ops import should_show_ops, render_ops_panel
 
 # 탭 모듈 임포트 (각 기능을 담당)
-from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab2_5_exception, tab3_prediction, tab4_validation, tab5_map
+from tabs import tab1_summary, tab1_5_insights, tab2_delivery, tab2_5_exception, tab3_prediction, tab4_validation, tab5_map, tab6_access_logs
 
 # 1. 페이지 기본 설정 (가장 먼저 실행되어야 함)
 st.set_page_config(
@@ -49,6 +49,8 @@ if st.session_state["ui_sidebar_hidden"]:
 
 # 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
 enforce_auth_gate()
+auth_ctx = get_auth_context()
+render_watermark_overlay()
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
@@ -117,6 +119,8 @@ if raw_order_df is not None and raw_delivery_df is not None:
         "🔍 4. 예측 모델 검증",
         "📍 5. 배송 지도",
     ]
+    if auth_ctx.get("role") == "admin":
+        views.append("🛠 6. 사용기록 관리")
     with st.sidebar:
         st.markdown("### 메뉴")
         selected_view = st.radio(
@@ -128,18 +132,20 @@ if raw_order_df is not None and raw_delivery_df is not None:
         )
 
     t_tab = time.perf_counter()
-    if selected_view == views[0]:
+    if selected_view == "📋 1. 종합 현황":
         tab1_summary.render(order_df, delivery_df, ana_df, ctx)
-    elif selected_view == views[1]:
+    elif selected_view == "📌 1.5 인사이트":
         tab1_5_insights.render(order_df, delivery_df, ctx, cache_key=cache_key)
-    elif selected_view == views[2]:
+    elif selected_view == "📈 2. 배송사별 분석":
         tab2_delivery.render(ana_df, run_meta=run_meta, cache_key=cache_key)
-    elif selected_view == views[3]:
+    elif selected_view == "⚠️ 2.5 운영 예외 큐":
         tab2_5_exception.render(delivery_df, ctx, cache_key=cache_key)
-    elif selected_view == views[4]:
+    elif selected_view == "🚀 3. 당월 출고 예측":
         tab3_prediction.render(ana_df, ctx, cache_key=cache_key)
-    elif selected_view == views[5]:
+    elif selected_view == "🔍 4. 예측 모델 검증":
         tab4_validation.render(ana_df, ctx, cache_key=cache_key)
+    elif selected_view == "🛠 6. 사용기록 관리" and auth_ctx.get("role") == "admin":
+        tab6_access_logs.render()
     else:
         tab5_map.render(ana_df, cache_key=cache_key)
     perf["selected_tab_render_sec"] = round(time.perf_counter() - t_tab, 4)

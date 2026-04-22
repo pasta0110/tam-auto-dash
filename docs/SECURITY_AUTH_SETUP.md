@@ -16,9 +16,14 @@ AUTH_KAKAO_REDIRECT_URI = "https://<your-app>.streamlit.app"
 AUTH_KAKAO_WHITELIST_IDS = ["1234567890", "2345678901"]
 AUTH_KAKAO_WHITELIST_EMAILS = ["ceo@company.com", "ops@company.com"]
 
-# PIN: 평문 또는 SHA256 중 1개만 사용
-AUTH_PIN_CODE = "2468"
-# AUTH_PIN_SHA256 = "..."
+# 관리자 지정(선택): 없으면 전원 일반
+AUTH_ADMIN_KAKAO_IDS = ["1234567890"]
+
+# PIN: 권한별 (평문 또는 SHA256 중 1개)
+AUTH_PIN_USER_CODE = "351037"
+AUTH_PIN_ADMIN_CODE = "144883"
+# AUTH_PIN_USER_SHA256 = "..."
+# AUTH_PIN_ADMIN_SHA256 = "..."
 
 AUTH_PIN_MAX_ATTEMPTS = 5
 AUTH_SESSION_MINUTES = 10
@@ -35,7 +40,7 @@ TELEGRAM_CHAT_ID = "chat id"
 ## 3) 동작 순서
 1. 카카오 OAuth 로그인
 2. 화이트리스트 체크(ID 또는 이메일)
-3. PIN 2차 인증
+3. 권한별 PIN 2차 인증(일반/관리자)
 4. 텔레그램 인증 로그 발송
 
 ## 4) 운영 권장
