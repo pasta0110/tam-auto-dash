@@ -58,7 +58,20 @@ def render(auth_ctx: dict | None = None) -> None:
     with col1:
         limit = st.selectbox("표시 개수", [100, 200, 500, 1000], index=2)
     with col2:
-        event_filter = st.selectbox("이벤트", ["전체", "view_tab", "login_success", "logout", "pin_failed", "pin_locked", "session_extended", "whitelist_denied"])
+        event_filter = st.selectbox(
+            "이벤트",
+            [
+                "전체",
+                "view_tab",
+                "login_success",
+                "logout",
+                "pin_failed",
+                "pin_locked",
+                "session_extended",
+                "whitelist_denied",
+                "suspicious_key",
+            ],
+        )
     with col3:
         refresh = st.button("새로고침", use_container_width=True)
 

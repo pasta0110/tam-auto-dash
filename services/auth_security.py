@@ -150,17 +150,16 @@ def _consume_security_signal(user: dict[str, Any], sid: str) -> None:
         return
 
     st.session_state[SESSION_LAST_SECURITY_SIGNAL] = signal_key
+    detail = f"event={ev},key={key_name or '-'},client_ts={client_ts or '-'}"
     meta = {
         **_client_meta_dict(),
         "sid": sid or "",
-        "event": ev,
-        "key": key_name or "-",
-        "client_ts": client_ts or "-",
+        "detail": detail,
     }
     append_access_log("suspicious_key", user=user, meta=meta)
 
     if _to_bool(_sget("AUTH_SECURITY_KEY_NOTIFY", False), False):
-        _notify("suspicious_key", f"user={user}\n{_client_meta()}\nevent={ev}\nkey={key_name}\nclient_ts={client_ts}")
+        _notify("suspicious_key", f"user={user}\n{_client_meta()}\n{detail}")
 
     _drop_query_params(["sec_event", "sec_key", "sec_ts"])
     st.rerun()
@@ -303,11 +302,12 @@ def render_capture_guard() -> None:
 
         function reportSecuritySignal(eventName, keyName) {
           try {
-            const u = new URL(window.location.href);
+            const p = (window.parent && window.parent.location) ? window.parent : window;
+            const u = new URL(p.location.href);
             u.searchParams.set("sec_event", eventName);
             u.searchParams.set("sec_key", keyName);
             u.searchParams.set("sec_ts", String(Date.now()));
-            window.location.replace(u.toString());
+            p.location.replace(u.toString());
           } catch (e) {
             // no-op
           }
@@ -315,11 +315,26 @@ def render_capture_guard() -> None:
 
         d.addEventListener("keydown", function(e) {
           const k = (e && e.key) ? String(e.key) : "";
+          const low = k.toLowerCase();
           const code = (e && e.keyCode) ? Number(e.keyCode) : 0;
           if (k === "PrintScreen" || code === 44) {
             triggerGuard();
             reportSecuritySignal("capture_key", "PrintScreen");
             e.preventDefault();
+            return;
+          }
+          if (code === 123 || low === "f12") {
+            reportSecuritySignal("devtools_key", "F12");
+            e.preventDefault();
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.shiftKey && (low === "i" || low === "j" || low === "c")) {
+            reportSecuritySignal("devtools_key", (e.ctrlKey ? "Ctrl+" : "Meta+") + "Shift+" + low.toUpperCase());
+            e.preventDefault();
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && low === "c") {
+            reportSecuritySignal("copy_key", (e.ctrlKey ? "Ctrl+C" : "Meta+C"));
           }
         }, true);
       } catch (err) {
