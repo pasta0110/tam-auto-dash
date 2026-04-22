@@ -10,6 +10,7 @@ from services.app_runtime import (
     build_caption_parts,
     notify_integrity_mismatch_once,
 )
+from services.auth_security import enforce_auth_gate
 from services.app_contract import run_contract_gate
 from services.app_processed import get_processed_payload, ensure_payload_computed
 from services.app_ops import should_show_ops, render_ops_panel
@@ -26,6 +27,9 @@ st.set_page_config(
 
 # 2. 전역 스타일 적용 (CSS)
 st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
+
+# 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
+enforce_auth_gate()
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)

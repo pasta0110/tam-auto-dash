@@ -65,6 +65,7 @@ python ch_NEW_smart_uploader.py --simulate-fail-step git
 
 ## 7) 참고 문서
 - 운영 런북: `docs/OPERATIONS_RUNBOOK.md`
+- 보안 로그인 설정: `docs/SECURITY_AUTH_SETUP.md`
 
 ## 8) 초기 세팅 3분 가이드
 ### 1. 저장소 준비
