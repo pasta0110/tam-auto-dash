@@ -760,6 +760,23 @@ def enforce_auth_gate() -> None:
 
     st.title("🔐 보안 로그인")
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
-    st.link_button("카카오로 로그인", login_url, use_container_width=True)
+    st.markdown(
+        f"""
+        <a href="{login_url}" target="_self" style="text-decoration:none;">
+          <div style="
+            width:100%;
+            text-align:center;
+            padding:0.6rem 0.8rem;
+            border:1px solid rgba(49,51,63,0.2);
+            border-radius:0.5rem;
+            font-weight:600;
+            color:#31333F;
+            background:#ffffff;
+            cursor:pointer;
+          ">카카오로 로그인</div>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
     st.caption("로그인 후 화이트리스트 + PIN 인증을 통과해야 대시보드가 열립니다.")
     st.stop()
