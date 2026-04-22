@@ -393,20 +393,18 @@ def _verify_state_token(token: str, secret_key: str, ttl_sec: int = 900) -> bool
         return False
 
 
-def _build_kakao_login_url(client_id: str, redirect_uri: str, state: str) -> str:
-    q = urlencode(
-        {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "state": state,
-            # account_email 권한이 없는 앱에서도 동작하도록 최소 scope만 사용
-            "scope": "profile_nickname",
-            # 모바일에서 카카오톡 간편로그인 오류(네트워크/릴레이/VPN) 시
-            # 카카오계정(아이디/비밀번호) 경로를 우선 사용하도록 유도
-            "through_account": "true",
-        }
-    )
+def _build_kakao_login_url(client_id: str, redirect_uri: str, state: str, through_account: bool = False) -> str:
+    params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "state": state,
+        # account_email 권한이 없는 앱에서도 동작하도록 최소 scope만 사용
+        "scope": "profile_nickname",
+    }
+    if through_account:
+        params["through_account"] = "true"
+    q = urlencode(params)
     return f"https://kauth.kakao.com/oauth/authorize?{q}"
 
 
@@ -756,7 +754,8 @@ def enforce_auth_gate() -> None:
     state_secret = cfg["state_secret"] or cfg["client_id"] or "kakao-auth"
     state = _make_state_token(state_secret)
     st.session_state[SESSION_OAUTH_STATE] = state
-    login_url = _build_kakao_login_url(cfg["client_id"], cfg["redirect_uri"], state)
+    login_url = _build_kakao_login_url(cfg["client_id"], cfg["redirect_uri"], state, through_account=False)
+    login_url_account = _build_kakao_login_url(cfg["client_id"], cfg["redirect_uri"], state, through_account=True)
 
     st.title("🔐 보안 로그인")
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
@@ -774,6 +773,25 @@ def enforce_auth_gate() -> None:
             background:#ffffff;
             cursor:pointer;
           ">카카오로 로그인</div>
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <a href="{login_url_account}" target="_self" style="text-decoration:none;">
+          <div style="
+            width:100%;
+            text-align:center;
+            padding:0.45rem 0.8rem;
+            border:1px dashed rgba(49,51,63,0.25);
+            border-radius:0.5rem;
+            font-size:0.92rem;
+            color:#6b7280;
+            background:#f9fafb;
+            margin-top:0.45rem;
+            cursor:pointer;
+          ">로그인 안 될 때: 카카오계정으로 로그인(우회)</div>
         </a>
         """,
         unsafe_allow_html=True,
