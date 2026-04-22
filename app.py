@@ -64,8 +64,14 @@ if st.session_state["ui_sidebar_hidden"]:
         """,
         unsafe_allow_html=True,
     )
-else:
-    # 메인 화면 클릭/터치 시 사이드바 자동 접기
+
+# 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
+enforce_auth_gate()
+auth_ctx = get_auth_context()
+render_watermark_overlay()
+
+# 로그인 이후에만 메인 화면 클릭/터치 시 사이드바 자동 접기 활성화
+if auth_ctx.get("ok") and (not st.session_state.get("ui_sidebar_hidden", False)):
     components.html(
         """
         <script>
@@ -110,11 +116,6 @@ else:
         """,
         height=0,
     )
-
-# 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
-enforce_auth_gate()
-auth_ctx = get_auth_context()
-render_watermark_overlay()
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
