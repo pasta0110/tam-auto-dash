@@ -402,6 +402,9 @@ def _build_kakao_login_url(client_id: str, redirect_uri: str, state: str) -> str
             "state": state,
             # account_email 권한이 없는 앱에서도 동작하도록 최소 scope만 사용
             "scope": "profile_nickname",
+            # 모바일에서 카카오톡 간편로그인 오류(네트워크/릴레이/VPN) 시
+            # 카카오계정(아이디/비밀번호) 경로를 우선 사용하도록 유도
+            "through_account": "true",
         }
     )
     return f"https://kauth.kakao.com/oauth/authorize?{q}"
