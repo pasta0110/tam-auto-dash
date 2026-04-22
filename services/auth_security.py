@@ -27,6 +27,11 @@ SESSION_PENDING_USER = "auth_pending_user"
 SESSION_PIN_ATTEMPTS = "auth_pin_attempts"
 SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
 SESSION_ACCESS_LOGGED = "auth_access_logged"
+SESSION_COUNTDOWN_GEN = "auth_countdown_gen"
+
+
+def _new_countdown_generation() -> int:
+    return int(time.time() * 1000)
 
 
 def _sget(key: str, default: Any = "") -> Any:
@@ -122,12 +127,12 @@ def _notify_whitelist_request_once(user: dict[str, str]) -> None:
     _notify("approve_request", detail)
 
 
-def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남은 시간") -> None:
+def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남은 시간", generation: int = 0) -> None:
     try:
         end_ms = int(float(until_ts) * 1000)
     except Exception:
         return
-    comp_id = f"session-countdown-{abs(hash((label, end_ms))) % 1000000}"
+    comp_id = f"session-countdown-{generation}-{end_ms}"
     safe_label = (label or "세션 남은 시간").replace("'", "\\'")
     html = f"""
     <div id="{comp_id}" style="font-size:13px;color:#6b7280;"></div>
@@ -153,18 +158,18 @@ def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남
     components.html(html, height=28)
 
 
-def render_session_popup_and_autologout(until_ts: float) -> None:
+def render_session_popup_and_autologout(until_ts: float, generation: int = 0) -> None:
     try:
         end_ms = int(float(until_ts) * 1000)
     except Exception:
         return
-    comp_id = f"session-guard-{abs(hash(end_ms)) % 1000000}"
+    comp_id = f"session-guard-{generation}-{end_ms}"
     html = f"""
     <div id="{comp_id}" style="display:none;"></div>
     <script>
     (function() {{
       const endMs = {end_ms};
-      const popupKey = "session_popup_" + endMs;
+      const popupKey = "session_popup_" + endMs + "_{generation}";
 
       function withParam(url, key, value) {{
         const u = new URL(url, window.location.origin);
@@ -347,6 +352,7 @@ def _clear_auth() -> None:
         SESSION_PENDING_USER,
         SESSION_PIN_ATTEMPTS,
         SESSION_ACCESS_LOGGED,
+        SESSION_COUNTDOWN_GEN,
         "last_view_logged",
     ]:
         if k in st.session_state:
@@ -356,7 +362,7 @@ def _clear_auth() -> None:
 def _clear_auth_runtime_only() -> None:
     # 콜백 직후 PIN 대기 상태(SESSION_PENDING_USER)는 유지해야 하므로
     # 루프 방지를 위해 pending을 제외한 런타임 인증 정보만 정리한다.
-    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED, "last_view_logged"]:
+    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED, SESSION_COUNTDOWN_GEN, "last_view_logged"]:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -433,6 +439,7 @@ def enforce_auth_gate() -> None:
         st.rerun()
     if q_extend and st.session_state.get(SESSION_AUTH):
         st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
         append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
         _notify("session_extended", _client_meta())
         try:
@@ -454,8 +461,16 @@ def enforce_auth_gate() -> None:
         with st.sidebar:
             st.caption(f"🔐 로그인: {user.get('nickname') or user.get('email') or user.get('id')}")
             st.caption(f"🛡 권한: {'관리자' if st.session_state.get(SESSION_AUTH_ROLE) == 'admin' else '일반'}")
-            render_live_session_countdown(st.session_state.get(SESSION_AUTH_UNTIL, 0), label="⏱ 세션")
-            render_session_popup_and_autologout(st.session_state.get(SESSION_AUTH_UNTIL, 0))
+            generation = int(st.session_state.get(SESSION_COUNTDOWN_GEN, 0))
+            render_live_session_countdown(
+                st.session_state.get(SESSION_AUTH_UNTIL, 0),
+                label="⏱ 세션",
+                generation=generation,
+            )
+            render_session_popup_and_autologout(
+                st.session_state.get(SESSION_AUTH_UNTIL, 0),
+                generation=generation,
+            )
             if st.button("로그아웃", key="auth_logout_btn"):
                 append_access_log(
                     "logout",
@@ -549,6 +564,7 @@ def enforce_auth_gate() -> None:
                 st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
                 st.session_state[SESSION_ACCESS_LOGGED] = False
+                st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
                 if SESSION_PENDING_USER in st.session_state:
                     del st.session_state[SESSION_PENDING_USER]
                 append_access_log("login_success", user={**pending, "role": role}, meta={**_client_meta_dict(), "sid": sid})
