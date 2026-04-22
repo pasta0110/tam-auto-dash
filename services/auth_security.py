@@ -532,12 +532,29 @@ def enforce_auth_gate() -> None:
         st.title("🔐 2차 인증(PIN)")
         st.info("카카오 인증이 완료되었습니다. PIN을 입력해주세요.")
 
-        role = str((pending or {}).get("role", "user"))
-        pin_code = cfg["pin_admin_code"] if role == "admin" else cfg["pin_user_code"]
-        pin_sha256 = cfg["pin_admin_sha256"] if role == "admin" else cfg["pin_user_sha256"]
+        base_role = str((pending or {}).get("role", "user"))
+        user_pin_code = cfg["pin_user_code"]
+        user_pin_sha256 = cfg["pin_user_sha256"]
+        admin_pin_code = cfg["pin_admin_code"]
+        admin_pin_sha256 = cfg["pin_admin_sha256"]
 
-        if not (pin_code or pin_sha256):
-            st.error("PIN 설정이 없습니다. AUTH_PIN_USER_CODE / AUTH_PIN_ADMIN_CODE(또는 *_SHA256)를 설정하세요.")
+        if base_role == "admin":
+            if not ((user_pin_code or user_pin_sha256) and (admin_pin_code or admin_pin_sha256)):
+                st.error("관리자/일반 PIN 설정이 누락되었습니다. AUTH_PIN_USER_CODE / AUTH_PIN_ADMIN_CODE(또는 *_SHA256)를 설정하세요.")
+                st.stop()
+            st.caption("관리자 계정은 PIN으로 권한을 선택할 수 있습니다: 351037(일반) / 144883(관리자)")
+        else:
+            if not (user_pin_code or user_pin_sha256):
+                st.error("일반 PIN 설정이 없습니다. AUTH_PIN_USER_CODE(또는 AUTH_PIN_USER_SHA256)를 설정하세요.")
+                st.stop()
+
+        if base_role == "admin":
+            pin_role_hint = "권한 선택 PIN"
+        else:
+            pin_role_hint = "PIN"
+
+        if base_role != "admin" and not (user_pin_code or user_pin_sha256):
+            st.error("PIN 설정이 없습니다. AUTH_PIN_USER_CODE(또는 AUTH_PIN_USER_SHA256)를 설정하세요.")
             st.stop()
 
         attempts = int(st.session_state.get(SESSION_PIN_ATTEMPTS, 0))
@@ -547,7 +564,7 @@ def enforce_auth_gate() -> None:
             _notify("pin_locked", f"user={pending}\n{_client_meta()}")
             st.stop()
 
-        pin_input = st.text_input("PIN", type="password", key="auth_pin_input")
+        pin_input = st.text_input(pin_role_hint, type="password", key="auth_pin_input")
         c1, c2 = st.columns([1, 1])
         with c1:
             verify = st.button("인증 확인", key="auth_pin_verify")
@@ -559,11 +576,25 @@ def enforce_auth_gate() -> None:
             st.rerun()
 
         if verify:
-            if _verify_pin(pin_input, pin_code, pin_sha256):
+            login_role = "user"
+            verified = False
+            if base_role == "admin":
+                if _verify_pin(pin_input, admin_pin_code, admin_pin_sha256):
+                    verified = True
+                    login_role = "admin"
+                elif _verify_pin(pin_input, user_pin_code, user_pin_sha256):
+                    verified = True
+                    login_role = "user"
+            else:
+                if _verify_pin(pin_input, user_pin_code, user_pin_sha256):
+                    verified = True
+                    login_role = "user"
+
+            if verified:
                 sid = secrets.token_hex(4)
                 st.session_state[SESSION_AUTH] = True
                 st.session_state[SESSION_AUTH_USER] = pending
-                st.session_state[SESSION_AUTH_ROLE] = role
+                st.session_state[SESSION_AUTH_ROLE] = login_role
                 st.session_state[SESSION_AUTH_SID] = sid
                 st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
@@ -571,8 +602,8 @@ def enforce_auth_gate() -> None:
                 st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
                 if SESSION_PENDING_USER in st.session_state:
                     del st.session_state[SESSION_PENDING_USER]
-                append_access_log("login_success", user={**pending, "role": role}, meta={**_client_meta_dict(), "sid": sid})
-                _notify("login_success", f"user={pending}\n{_client_meta()}")
+                append_access_log("login_success", user={**pending, "role": login_role}, meta={**_client_meta_dict(), "sid": sid, "mode": login_role})
+                _notify("login_success", f"user={pending}\nmode={login_role}\n{_client_meta()}")
                 st.rerun()
             else:
                 st.session_state[SESSION_PIN_ATTEMPTS] = attempts + 1
