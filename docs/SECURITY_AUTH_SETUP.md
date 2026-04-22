@@ -21,7 +21,7 @@ AUTH_PIN_CODE = "2468"
 # AUTH_PIN_SHA256 = "..."
 
 AUTH_PIN_MAX_ATTEMPTS = 5
-AUTH_SESSION_HOURS = 12
+AUTH_SESSION_MINUTES = 10
 
 TELEGRAM_BOT_TOKEN = "bot token"
 TELEGRAM_CHAT_ID = "chat id"
@@ -30,7 +30,7 @@ TELEGRAM_CHAT_ID = "chat id"
 ## 2) 카카오 개발자 콘솔 설정
 - 플랫폼: Web
 - Redirect URI: `AUTH_KAKAO_REDIRECT_URI` 값과 동일하게 등록
-- 동의항목: `닉네임`, `이메일` 사용
+- 동의항목: `닉네임` 사용 (`이메일`은 권한이 있을 때만)
 
 ## 3) 동작 순서
 1. 카카오 OAuth 로그인

@@ -103,6 +103,10 @@ def _notify_whitelist_request_once(user: dict[str, str]) -> None:
 
 
 def _settings() -> dict[str, Any]:
+    session_minutes = _to_int(_sget("AUTH_SESSION_MINUTES", 10), 10)
+    if session_minutes <= 0:
+        # backward compatibility
+        session_minutes = max(1, _to_int(_sget("AUTH_SESSION_HOURS", 12), 12) * 60)
     return {
         "enabled": _to_bool(_sget("AUTH_ENABLED", False), False),
         "client_id": str(_sget("AUTH_KAKAO_CLIENT_ID", "")).strip(),
@@ -112,8 +116,8 @@ def _settings() -> dict[str, Any]:
         "whitelist_emails": set(x.lower() for x in _to_list(_sget("AUTH_KAKAO_WHITELIST_EMAILS", []))),
         "pin_code": str(_sget("AUTH_PIN_CODE", "")).strip(),
         "pin_sha256": str(_sget("AUTH_PIN_SHA256", "")).strip().lower(),
-        "pin_max_attempts": _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5),
-        "session_hours": _to_int(_sget("AUTH_SESSION_HOURS", 12), 12),
+        "pin_max_attempts": max(1, _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5)),
+        "session_minutes": session_minutes,
         "state_secret": str(_sget("AUTH_STATE_SECRET", "")).strip(),
     }
 
@@ -299,7 +303,7 @@ def enforce_auth_gate() -> None:
 
         attempts = int(st.session_state.get(SESSION_PIN_ATTEMPTS, 0))
         if attempts >= cfg["pin_max_attempts"]:
-            st.error("PIN 실패 횟수 초과. 페이지를 새로고침하고 다시 시도하세요.")
+            st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
             _notify("pin_locked", f"user={pending}\n{_client_meta()}")
             st.stop()
 
@@ -318,7 +322,7 @@ def enforce_auth_gate() -> None:
             if _verify_pin(pin_input, cfg["pin_code"], cfg["pin_sha256"]):
                 st.session_state[SESSION_AUTH] = True
                 st.session_state[SESSION_AUTH_USER] = pending
-                st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_hours"] * 3600)
+                st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
                 if SESSION_PENDING_USER in st.session_state:
                     del st.session_state[SESSION_PENDING_USER]
@@ -327,7 +331,10 @@ def enforce_auth_gate() -> None:
             else:
                 st.session_state[SESSION_PIN_ATTEMPTS] = attempts + 1
                 left = max(0, cfg["pin_max_attempts"] - st.session_state[SESSION_PIN_ATTEMPTS])
-                st.error(f"PIN 불일치 (남은 시도: {left})")
+                if left == 0:
+                    st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
+                else:
+                    st.error(f"PIN 불일치 (남은 시도: {left})")
                 _notify("pin_failed", f"user={pending}\nremain={left}\n{_client_meta()}")
         st.stop()
 
