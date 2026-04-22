@@ -542,7 +542,7 @@ def enforce_auth_gate() -> None:
             if not ((user_pin_code or user_pin_sha256) and (admin_pin_code or admin_pin_sha256)):
                 st.error("관리자/일반 PIN 설정이 누락되었습니다. AUTH_PIN_USER_CODE / AUTH_PIN_ADMIN_CODE(또는 *_SHA256)를 설정하세요.")
                 st.stop()
-            st.caption("관리자 계정은 PIN으로 권한을 선택할 수 있습니다: 351037(일반) / 144883(관리자)")
+            st.caption("관리자 계정은 PIN으로 권한을 선택할 수 있습니다.")
         else:
             if not (user_pin_code or user_pin_sha256):
                 st.error("일반 PIN 설정이 없습니다. AUTH_PIN_USER_CODE(또는 AUTH_PIN_USER_SHA256)를 설정하세요.")
