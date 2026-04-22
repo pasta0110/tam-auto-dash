@@ -344,6 +344,7 @@ def _clear_auth() -> None:
         SESSION_PENDING_USER,
         SESSION_PIN_ATTEMPTS,
         SESSION_ACCESS_LOGGED,
+        "last_view_logged",
     ]:
         if k in st.session_state:
             del st.session_state[k]
@@ -352,7 +353,7 @@ def _clear_auth() -> None:
 def _clear_auth_runtime_only() -> None:
     # 콜백 직후 PIN 대기 상태(SESSION_PENDING_USER)는 유지해야 하므로
     # 루프 방지를 위해 pending을 제외한 런타임 인증 정보만 정리한다.
-    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED]:
+    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED, "last_view_logged"]:
         if k in st.session_state:
             del st.session_state[k]
 

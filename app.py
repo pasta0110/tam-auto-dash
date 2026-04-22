@@ -11,6 +11,7 @@ from services.app_runtime import (
     notify_integrity_mismatch_once,
 )
 from services.auth_security import enforce_auth_gate, get_auth_context, render_watermark_overlay
+from services.access_log import append_access_log
 from services.app_contract import run_contract_gate
 from services.app_processed import get_processed_payload, ensure_payload_computed
 from services.app_ops import should_show_ops, render_ops_panel
@@ -130,6 +131,22 @@ if raw_order_df is not None and raw_delivery_df is not None:
             label_visibility="collapsed",
             key="main_view",
         )
+
+    # 사용자 열람 이력 추적: 탭 전환 시점마다 기록
+    if auth_ctx.get("ok"):
+        current_view = str(selected_view)
+        prev_view = st.session_state.get("last_view_logged")
+        if prev_view != current_view:
+            user = auth_ctx.get("user") or {}
+            append_access_log(
+                "view_tab",
+                user={**user, "role": auth_ctx.get("role", "user")},
+                meta={
+                    "sid": auth_ctx.get("sid", ""),
+                    "detail": current_view,
+                },
+            )
+            st.session_state["last_view_logged"] = current_view
 
     t_tab = time.perf_counter()
     if selected_view == "📋 1. 종합 현황":
