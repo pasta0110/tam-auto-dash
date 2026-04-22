@@ -388,36 +388,40 @@ def render_watermark_overlay() -> None:
     nick = user.get("nickname", "-")
     txt = f"내부전용 | {role} | {nick}({uid}) | sid:{sid} | 외부공유 금지"
     safe_txt = txt.replace("'", "\\'")
-    html = f"""
-    <style>
-    .wm-grid {{
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      z-index: 9999;
-      opacity: 0.08;
-      font-size: 14px;
-      color: #111827;
-      transform: rotate(-18deg);
-      transform-origin: center;
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      row-gap: 84px;
-      column-gap: 48px;
-      padding: 80px 24px;
-    }}
-    .wm-item {{
-      white-space: nowrap;
-    }}
-    </style>
-    <div class="wm-grid">
-      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
-      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
-      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
-      <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
-    </div>
-    """
-    components.html(html, height=0)
+    st.markdown(
+        f"""
+        <style>
+        .wm-grid {{
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          z-index: 999999;
+          opacity: 0.10;
+          font-size: 14px;
+          font-weight: 600;
+          color: #111827;
+          transform: rotate(-18deg);
+          transform-origin: center;
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          row-gap: 84px;
+          column-gap: 48px;
+          padding: 80px 24px;
+        }}
+        .wm-item {{
+          white-space: nowrap;
+          user-select: none;
+        }}
+        </style>
+        <div class="wm-grid">
+          <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+          <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+          <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+          <div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div><div class="wm-item">{safe_txt}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def enforce_auth_gate() -> None:
