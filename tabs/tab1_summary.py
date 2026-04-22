@@ -27,6 +27,9 @@ def render(order_df, delivery_df, ana_df, ctx):
     """
     
     st.title("🏛️ 청호나이스 종합 현황")
+    mobile_mode = bool(st.session_state.get("ui_mobile_mode", str(st.query_params.get("mobile", "0")) == "1"))
+    if mobile_mode:
+        st.caption("모바일 최적화 모드: 표를 세로 배치로 표시")
 
     # Tab1은 morning_all_in_one_v6_final.py의 주문/출고 필터 기준을 적용한 데이터로만 계산합니다.
     order_df = filter_order_for_tab1(order_df)
@@ -39,11 +42,15 @@ def render(order_df, delivery_df, ana_df, ctx):
     y_date = to_date(yesterday)
     date_header = f"기준일({y_date.strftime('%m/%d')})"
     
-    col1, col2 = st.columns(2)
-    col3, col4 = st.columns(2)
+    if mobile_mode:
+        sections = [st.container(), st.container(), st.container(), st.container()]
+    else:
+        col1, col2 = st.columns(2)
+        col3, col4 = st.columns(2)
+        sections = [col1, col2, col3, col4]
     
     # --- 1. 주문 현황 ---
-    with col1:
+    with sections[0]:
         st.subheader("🛒 1. 주문 현황")
         order_date_col = '등록일' if '등록일' in order_df.columns else order_df.columns[0]
         
@@ -53,10 +60,14 @@ def render(order_df, delivery_df, ana_df, ctx):
         df_order = build_main_rows(curr_order, day_order, date_header)
         df_p_order = build_panel_rows(curr_order, day_order, date_header, "▶ 판넬 합계")
         
-        st.table(pd.concat([df_order, df_p_order], ignore_index=True).set_index('품목'))
+        v = pd.concat([df_order, df_p_order], ignore_index=True).set_index('품목')
+        if mobile_mode:
+            st.dataframe(v.reset_index(), use_container_width=True, hide_index=True, height=280)
+        else:
+            st.table(v)
         
     # --- 2. 출고 현황 ---
-    with col2:
+    with sections[1]:
         st.subheader("🚚 2. 출고 현황")
         # 엑셀 보고서 기준: 당월 1일 ~ 기준일(=어제)까지
         if '배송예정일_DT' in ana_df.columns:
@@ -102,10 +113,14 @@ def render(order_df, delivery_df, ana_df, ctx):
         df_p_del = pd.DataFrame(p_rows)
         df_p_del.loc[len(df_p_del)] = ['▶ 판넬 합계', df_p_del['당월 합계'].sum(), df_p_del[date_header].sum()]
         
-        st.table(pd.concat([df_delivery, df_p_del], ignore_index=True).set_index('품목'))
+        v = pd.concat([df_delivery, df_p_del], ignore_index=True).set_index('품목')
+        if mobile_mode:
+            st.dataframe(v.reset_index(), use_container_width=True, hide_index=True, height=280)
+        else:
+            st.table(v)
         
     # --- 3. 반품 현황 ---
-    with col3:
+    with sections[2]:
         st.subheader("🔄 3. 반품 현황")
         
         # 반품 완료이면서 주문유형에 '반품'이 포함된 건
@@ -151,10 +166,14 @@ def render(order_df, delivery_df, ana_df, ctx):
         df_p_ret = pd.DataFrame(p_rows_ret)
         df_p_ret.loc[len(df_p_ret)] = ['▶ 판넬 합계', df_p_ret['당월주문 반품'].sum(), df_p_ret['이전주문 반품'].sum(), df_p_ret['합계'].sum()]
         
-        st.table(pd.concat([df_ret, df_p_ret], ignore_index=True).set_index('품목'))
+        v = pd.concat([df_ret, df_p_ret], ignore_index=True).set_index('품목')
+        if mobile_mode:
+            st.dataframe(v.reset_index(), use_container_width=True, hide_index=True, height=300)
+        else:
+            st.table(v)
         
     # --- 4. 최종 정산 ---
-    with col4:
+    with sections[3]:
         st.subheader("💰 4. 최종 정산")
         
         calc_rows = []
@@ -203,4 +222,8 @@ def render(order_df, delivery_df, ana_df, ctx):
             df_p_calc['최종 정산'].sum()
         ]
         
-        st.table(pd.concat([df_calc, df_p_calc], ignore_index=True).set_index('품목'))
+        v = pd.concat([df_calc, df_p_calc], ignore_index=True).set_index('품목')
+        if mobile_mode:
+            st.dataframe(v.reset_index(), use_container_width=True, hide_index=True, height=300)
+        else:
+            st.table(v)

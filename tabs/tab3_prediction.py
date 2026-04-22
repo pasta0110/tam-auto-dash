@@ -11,7 +11,7 @@ def render(ana_df, ctx, cache_key=None):
     당월 출고 예측 탭 렌더링
     """
     st.title("🚀 당월 출고 예측 (최근 30일 페이스 + 역대 정확도 보정)")
-    mobile_mode = str(st.query_params.get("mobile", "0")) == "1"
+    mobile_mode = bool(st.session_state.get("ui_mobile_mode", str(st.query_params.get("mobile", "0")) == "1"))
     
     yesterday_str = ctx['yesterday_str']
     state_key = f"tab3_prediction::{cache_key}::{ctx.get('m_key')}::{ctx.get('yesterday_str')}"

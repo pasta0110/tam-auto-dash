@@ -56,6 +56,7 @@ def _map_side_summary(df: pd.DataFrame):
 def render(ana_df, cache_key=None):
     st.title("📍 전국 실시간 배송 밀집도 (AI 분석)")
     st.markdown("브이월드 API와 AI 알고리즘을 활용하여 **배송 속도(영업일 기준), 물류사 분포, 상품별 수요**를 시각적으로 분석합니다.")
+    mobile_mode = bool(st.session_state.get("ui_mobile_mode", str(st.query_params.get("mobile", "0")) == "1"))
 
     # [보안] 1. API 키 관리
     try:
@@ -159,7 +160,7 @@ def render(ana_df, cache_key=None):
             analysis_mode = st.radio(
                 "📊 분석 모드 선택",
                 ["🔥 주문 밀집도 (기본)", "🚚 배송 소요시간 분석", "🏢 배송사별 분포", "📦 상품별 수요 분석"],
-                horizontal=True
+                horizontal=(not mobile_mode)
             )
             
             # 상품 선택 필터
@@ -178,15 +179,25 @@ def render(ana_df, cache_key=None):
 
             if "tab5_render_map" not in st.session_state:
                 st.session_state["tab5_render_map"] = False
-            c_btn1, c_btn2, _ = st.columns([1, 1, 3])
-            if c_btn1.button("🗺️ 지도 렌더링", key="tab5_render_on"):
-                st.session_state["tab5_render_map"] = True
-            if c_btn2.button("⏹️ 지도 숨기기", key="tab5_render_off"):
-                st.session_state["tab5_render_map"] = False
+            if mobile_mode:
+                if st.button("🗺️ 지도 렌더링", key="tab5_render_on", use_container_width=True):
+                    st.session_state["tab5_render_map"] = True
+                if st.button("⏹️ 지도 숨기기", key="tab5_render_off", use_container_width=True):
+                    st.session_state["tab5_render_map"] = False
+            else:
+                c_btn1, c_btn2, _ = st.columns([1, 1, 3])
+                if c_btn1.button("🗺️ 지도 렌더링", key="tab5_render_on"):
+                    st.session_state["tab5_render_map"] = True
+                if c_btn2.button("⏹️ 지도 숨기기", key="tab5_render_off"):
+                    st.session_state["tab5_render_map"] = False
 
             # 레이아웃 분할
-            col_map, col_stat = st.columns([3, 1])
-            max_points = st.slider("🗺️ 지도 표시 최대 포인트", 800, 8000, 2500, 400, key="tab5_max_points")
+            if mobile_mode:
+                col_map, col_stat = st.container(), st.container()
+                max_points = st.slider("🗺️ 지도 표시 최대 포인트", 500, 4000, 1500, 250, key="tab5_max_points")
+            else:
+                col_map, col_stat = st.columns([3, 1])
+                max_points = st.slider("🗺️ 지도 표시 최대 포인트", 800, 8000, 2500, 400, key="tab5_max_points")
             map_df = final_map_df if len(final_map_df) <= max_points else final_map_df.sample(max_points, random_state=42)
             if len(final_map_df) > max_points:
                 st.caption(f"성능 최적화를 위해 지도 표시는 {len(final_map_df):,}건 중 {max_points:,}건만 샘플링합니다.")
@@ -316,7 +327,10 @@ def render(ana_df, cache_key=None):
                         marker_cluster = FastMarkerCluster(data=map_df[['lat', 'lon']].values.tolist())
                         marker_cluster.add_to(m)
 
-                    folium_static(m, width=900, height=600)
+                    if mobile_mode:
+                        folium_static(m, width=360, height=430)
+                    else:
+                        folium_static(m, width=900, height=600)
             
             with col_stat:
                 st.subheader(f"📊 {analysis_mode}")

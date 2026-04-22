@@ -31,20 +31,24 @@ def _auto_working_day_for_month(month_key: str, today_kst: datetime.date) -> int
 def render(ana_df, ctx, cache_key=None):
     st.title("🔍 예측 모델 검증 및 골든 데이 분석")
     st.markdown("전월 데이터를 바탕으로 **'몇 영업일째의 예측이 가장 정확했는지'**를 분석하여 모델의 신뢰도를 검증합니다.")
+    mobile_mode = bool(st.session_state.get("ui_mobile_mode", str(st.query_params.get("mobile", "0")) == "1"))
     
     # 1. 상단 컨트롤러
-    c1, c2, c3 = st.columns([1.5, 1, 2])
     available_months = sorted(ana_df['연월_키'].unique(), reverse=True)
     default_idx = 1 if len(available_months) > 1 else 0
-    
-    with c1:
+
+    if mobile_mode:
         sel_month_key = st.selectbox("📅 검증 대상 월 선택", available_months, index=default_idx, key="v_month_sel")
+    else:
+        c1, c2, c3 = st.columns([1.5, 1, 2])
+        with c1:
+            sel_month_key = st.selectbox("📅 검증 대상 월 선택", available_months, index=default_idx, key="v_month_sel")
     # 시뮬레이션 기준일을 '조회하는 날' 기준 영업일차로 자동 반영
     today_kst = ctx.get("today", datetime.date.today())
     auto_day_num = _auto_working_day_for_month(str(sel_month_key), today_kst)
     st.session_state["v_day_num"] = int(auto_day_num)
 
-    with c2:
+    if mobile_mode:
         sel_day_num = st.number_input(
             "📅 시뮬레이션 기준일 (영업일)",
             min_value=1,
@@ -52,8 +56,18 @@ def render(ana_df, ctx, cache_key=None):
             value=int(auto_day_num),
             key="v_day_num",
         )
-    with c3:
         st.info(f"💡 **분석 시나리오:** {sel_month_key}월의 **{sel_day_num}영업일차** 시점 예측치 분석")
+    else:
+        with c2:
+            sel_day_num = st.number_input(
+                "📅 시뮬레이션 기준일 (영업일)",
+                min_value=1,
+                max_value=24,
+                value=int(auto_day_num),
+                key="v_day_num",
+            )
+        with c3:
+            st.info(f"💡 **분석 시나리오:** {sel_month_key}월의 **{sel_day_num}영업일차** 시점 예측치 분석")
         
     # 2. 핵심 시뮬레이션 계산
     sim_state_key = f"tab4_sim::{cache_key}::{sel_month_key}::{int(sel_day_num)}"
@@ -65,7 +79,10 @@ def render(ana_df, ctx, cache_key=None):
 
     if target_date:
         st.subheader(f"📍 {sel_day_num}영업일차({target_date.strftime('%m/%d')}) 예측 결과")
-        st.table(test_df.set_index('지역센터'))
+        if mobile_mode:
+            st.dataframe(test_df, use_container_width=True, hide_index=True)
+        else:
+            st.table(test_df.set_index('지역센터'))
         st.divider()
         
         # 4. 골든 데이 분석
@@ -87,7 +104,10 @@ def render(ana_df, ctx, cache_key=None):
         display_day = fastest_golden_day if fastest_golden_day else best_day_info
         
         if best_day_info:
-            m1, m2 = st.columns([1, 2])
+            if mobile_mode:
+                m1, m2 = st.container(), st.container()
+            else:
+                m1, m2 = st.columns([1, 2])
             with m1:
                 st.metric("최적 예측 시점 (빠른달성)", f"{display_day['day']}영업일", f"{display_day['date']}")
                 st.metric("해당 시점 정확도", f"{display_day['acc']:.1f}%")
@@ -118,7 +138,10 @@ def render(ana_df, ctx, cache_key=None):
             )
         df_daily = st.session_state[daily_state_key]
         if not df_daily.empty:
-            c_l, c_r = st.columns([1, 2])
+            if mobile_mode:
+                c_l, c_r = st.container(), st.container()
+            else:
+                c_l, c_r = st.columns([1, 2])
             with c_l:
                 st.dataframe(df_daily.set_index("연월"), height=300, use_container_width=True)
             with c_r:
@@ -149,7 +172,10 @@ def render(ana_df, ctx, cache_key=None):
                 candidate_days = df_master[df_master['평균정확도'] >= (max_acc - tolerance)]
                 m_golden = candidate_days.sort_values(by='영업일', ascending=True).iloc[0]
                 
-                mm1, mm2 = st.columns([1, 2])
+                if mobile_mode:
+                    mm1, mm2 = st.container(), st.container()
+                else:
+                    mm1, mm2 = st.columns([1, 2])
                 with mm1:
                     st.metric("🏆 마스터 골든 데이", f"{int(m_golden['영업일'])}영업일차")
                     st.metric("📈 기대 정확도", f"{m_golden['평균정확도']:.1f}%")
