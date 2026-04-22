@@ -2,7 +2,6 @@
 # 메인 실행 파일 (진입점)
 
 import streamlit as st
-import streamlit.components.v1 as components
 import config
 import time
 from utils.date_utils import get_current_context
@@ -46,76 +45,30 @@ if q_mobile in {"0", "1"}:
 elif "ui_mobile_mode" not in st.session_state:
     st.session_state["ui_mobile_mode"] = _detect_mobile_from_context()
 
-# 2.3 사이드바 토글(넣기/빼기)
-if "ui_sidebar_hidden" not in st.session_state:
-    st.session_state["ui_sidebar_hidden"] = False
-
-toggle_label = "📂 메뉴 펼치기" if st.session_state["ui_sidebar_hidden"] else "📁 메뉴 접기"
-if st.button(toggle_label, key="toggle_sidebar_btn"):
-    st.session_state["ui_sidebar_hidden"] = not st.session_state["ui_sidebar_hidden"]
-    st.rerun()
-
-if st.session_state["ui_sidebar_hidden"]:
-    st.markdown(
-        """
-        <style>
-        section[data-testid="stSidebar"] {display: none !important;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
 # 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
 enforce_auth_gate()
 auth_ctx = get_auth_context()
 render_watermark_overlay()
 
-# 로그인 이후에만 메인 화면 클릭/터치 시 사이드바 자동 접기 활성화
-if auth_ctx.get("ok") and (not st.session_state.get("ui_sidebar_hidden", False)):
-    components.html(
-        """
-        <script>
-        (function() {
-          try {
-            const d = window.parent && window.parent.document ? window.parent.document : document;
-            if (!d || d.getElementById("sidebar-autoclose-installed")) return;
-            const mark = d.createElement("div");
-            mark.id = "sidebar-autoclose-installed";
-            mark.style.display = "none";
-            d.body.appendChild(mark);
+# 2.6 사이드바 토글(로그인 후에만 표시)
+if "ui_sidebar_hidden" not in st.session_state:
+    st.session_state["ui_sidebar_hidden"] = False
 
-            function findToggleBtn() {
-              const buttons = Array.from(d.querySelectorAll("button"));
-              return buttons.find((b) => {
-                const t = (b.innerText || b.textContent || "").trim();
-                return t.includes("메뉴 접기");
-              });
-            }
+if auth_ctx.get("ok"):
+    toggle_label = "📂 메뉴 펼치기" if st.session_state["ui_sidebar_hidden"] else "📁 메뉴 접기"
+    if st.button(toggle_label, key="toggle_sidebar_btn"):
+        st.session_state["ui_sidebar_hidden"] = not st.session_state["ui_sidebar_hidden"]
+        st.rerun()
 
-            function shouldIgnoreTarget(target) {
-              if (!target) return false;
-              if (target.closest('section[data-testid="stSidebar"]')) return true;
-              if (target.closest('button')) {
-                const t = (target.closest('button').innerText || "").trim();
-                if (t.includes("메뉴 펼치기") || t.includes("메뉴 접기")) return true;
-              }
-              return false;
-            }
-
-            function onMainInteraction(e) {
-              if (shouldIgnoreTarget(e.target)) return;
-              const btn = findToggleBtn();
-              if (btn) btn.click();
-            }
-
-            d.addEventListener("click", onMainInteraction, true);
-            d.addEventListener("touchstart", onMainInteraction, true);
-          } catch (e) {}
-        })();
-        </script>
-        """,
-        height=0,
-    )
+    if st.session_state["ui_sidebar_hidden"]:
+        st.markdown(
+            """
+            <style>
+            section[data-testid="stSidebar"] {display: none !important;}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
