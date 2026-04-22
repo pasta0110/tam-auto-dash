@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
 from services.notifiers import build_telegram_notifier
 
@@ -100,6 +101,37 @@ def _notify_whitelist_request_once(user: dict[str, str]) -> None:
         f'AUTH_KAKAO_WHITELIST_IDS = ["{uid}", ...]'
     )
     _notify("approve_request", detail)
+
+
+def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남은 시간") -> None:
+    try:
+        end_ms = int(float(until_ts) * 1000)
+    except Exception:
+        return
+    comp_id = f"session-countdown-{abs(hash((label, end_ms))) % 1000000}"
+    safe_label = (label or "세션 남은 시간").replace("'", "\\'")
+    html = f"""
+    <div id="{comp_id}" style="font-size:13px;color:#6b7280;"></div>
+    <script>
+    (function() {{
+      const endMs = {end_ms};
+      const el = document.getElementById('{comp_id}');
+      function pad(n) {{ return String(n).padStart(2, '0'); }}
+      function tick() {{
+        const now = Date.now();
+        let remain = Math.max(0, Math.floor((endMs - now) / 1000));
+        const mm = Math.floor(remain / 60);
+        const ss = remain % 60;
+        if (el) {{
+          el.textContent = '{safe_label}: ' + pad(mm) + ':' + pad(ss);
+        }}
+      }}
+      tick();
+      setInterval(tick, 1000);
+    }})();
+    </script>
+    """
+    components.html(html, height=28)
 
 
 def _settings() -> dict[str, Any]:
@@ -245,11 +277,9 @@ def enforce_auth_gate() -> None:
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
-        remain_sec = max(0, int(float(st.session_state.get(SESSION_AUTH_UNTIL, 0)) - time.time()))
-        mm, ss = divmod(remain_sec, 60)
         with st.sidebar:
             st.caption(f"🔐 로그인: {user.get('nickname') or user.get('email') or user.get('id')}")
-            st.caption(f"⏱ 세션: {mm:02d}:{ss:02d}")
+            render_live_session_countdown(st.session_state.get(SESSION_AUTH_UNTIL, 0), label="⏱ 세션")
             if st.button("로그아웃", key="auth_logout_btn"):
                 _clear_auth()
                 _notify("logout", _client_meta())
