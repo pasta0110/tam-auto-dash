@@ -8,6 +8,7 @@ import time
 import base64
 from typing import Any
 from urllib.parse import urlencode
+from urllib.parse import quote
 
 import requests
 import streamlit as st
@@ -769,5 +770,8 @@ def enforce_auth_gate() -> None:
     st.title("🔐 보안 로그인")
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
     st.link_button("카카오계정으로 로그인 (권장)", login_url, use_container_width=True)
+    kakao_logout_redirect = cfg["redirect_uri"] or "https://ch-smart-report.streamlit.app"
+    kakao_logout_url = f"https://accounts.kakao.com/logout?continue={quote(kakao_logout_redirect, safe='')}"
+    st.link_button("카카오 로그아웃 (테스트용)", kakao_logout_url, use_container_width=True)
     st.caption("로그인 후 화이트리스트 + PIN 인증을 통과해야 대시보드가 열립니다.")
     st.stop()
