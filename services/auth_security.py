@@ -205,6 +205,80 @@ def render_session_popup_and_autologout(until_ts: float, generation: int = 0) ->
     components.html(html, height=0)
 
 
+def render_capture_guard() -> None:
+    enabled = _to_bool(_sget("AUTH_CAPTURE_GUARD_ENABLED", True), True)
+    if not enabled:
+        return
+    html = """
+    <script>
+    (function() {
+      try {
+        const d = window.parent && window.parent.document ? window.parent.document : document;
+        if (!d || d.getElementById("capture-guard-installed")) return;
+
+        const mark = d.createElement("div");
+        mark.id = "capture-guard-installed";
+        mark.style.display = "none";
+        d.body.appendChild(mark);
+
+        const overlay = d.createElement("div");
+        overlay.id = "capture-guard-overlay";
+        overlay.style.position = "fixed";
+        overlay.style.inset = "0";
+        overlay.style.background = "#ffffff";
+        overlay.style.zIndex = "2147483647";
+        overlay.style.display = "none";
+        overlay.style.alignItems = "center";
+        overlay.style.justifyContent = "center";
+        overlay.style.flexDirection = "column";
+        overlay.style.fontFamily = "Arial, sans-serif";
+        overlay.style.color = "#111827";
+        overlay.style.gap = "12px";
+
+        const msg = d.createElement("div");
+        msg.textContent = "보안 경고: 캡처 키가 감지되어 화면이 가려졌습니다.";
+        msg.style.fontSize = "18px";
+        msg.style.fontWeight = "700";
+
+        const sub = d.createElement("div");
+        sub.textContent = "외부 공유는 금지되어 있습니다.";
+        sub.style.fontSize = "14px";
+
+        const btn = d.createElement("button");
+        btn.textContent = "화면 복구";
+        btn.style.padding = "10px 16px";
+        btn.style.border = "1px solid #111827";
+        btn.style.background = "#fff";
+        btn.style.cursor = "pointer";
+        btn.onclick = function() { overlay.style.display = "none"; };
+
+        overlay.appendChild(msg);
+        overlay.appendChild(sub);
+        overlay.appendChild(btn);
+        d.body.appendChild(overlay);
+
+        function triggerGuard() {
+          overlay.style.display = "flex";
+          try { window.parent.alert("캡처 키(PrintScreen)가 감지되었습니다."); } catch (e) {}
+        }
+
+        d.addEventListener("keydown", function(e) {
+          const k = (e && e.key) ? String(e.key) : "";
+          const code = (e && e.keyCode) ? Number(e.keyCode) : 0;
+          if (k === "PrintScreen" || code === 44) {
+            triggerGuard();
+            e.preventDefault();
+          }
+        }, true);
+      } catch (err) {
+        // no-op
+      }
+    })();
+    </script>
+    """
+    components.html(html, height=0)
+
+
 def _settings() -> dict[str, Any]:
     session_minutes = _to_int(_sget("AUTH_SESSION_MINUTES", 10), 10)
     if session_minutes <= 0:
@@ -475,6 +549,7 @@ def enforce_auth_gate() -> None:
                 st.session_state.get(SESSION_AUTH_UNTIL, 0),
                 generation=generation,
             )
+            render_capture_guard()
             if st.button("로그아웃", key="auth_logout_btn"):
                 append_access_log(
                     "logout",
