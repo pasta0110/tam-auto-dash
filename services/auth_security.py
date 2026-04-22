@@ -28,6 +28,7 @@ SESSION_PIN_ATTEMPTS = "auth_pin_attempts"
 SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
 SESSION_ACCESS_LOGGED = "auth_access_logged"
 SESSION_COUNTDOWN_GEN = "auth_countdown_gen"
+SESSION_LAST_SECURITY_SIGNAL = "auth_last_security_signal"
 
 
 def _new_countdown_generation() -> int:
@@ -125,6 +126,44 @@ def _notify_whitelist_request_once(user: dict[str, str]) -> None:
         f'AUTH_KAKAO_WHITELIST_IDS = ["{uid}", ...]'
     )
     _notify("approve_request", detail)
+
+
+def _drop_query_params(keys: list[str]) -> None:
+    try:
+        for k in keys:
+            if k in st.query_params:
+                del st.query_params[k]
+    except Exception:
+        pass
+
+
+def _consume_security_signal(user: dict[str, Any], sid: str) -> None:
+    ev = str(st.query_params.get("sec_event", "")).strip().lower()
+    if not ev:
+        return
+
+    key_name = str(st.query_params.get("sec_key", "")).strip()[:80]
+    client_ts = str(st.query_params.get("sec_ts", "")).strip()[:32]
+    signal_key = f"{ev}|{key_name}|{client_ts}"
+    if st.session_state.get(SESSION_LAST_SECURITY_SIGNAL) == signal_key:
+        _drop_query_params(["sec_event", "sec_key", "sec_ts"])
+        return
+
+    st.session_state[SESSION_LAST_SECURITY_SIGNAL] = signal_key
+    meta = {
+        **_client_meta_dict(),
+        "sid": sid or "",
+        "event": ev,
+        "key": key_name or "-",
+        "client_ts": client_ts or "-",
+    }
+    append_access_log("suspicious_key", user=user, meta=meta)
+
+    if _to_bool(_sget("AUTH_SECURITY_KEY_NOTIFY", False), False):
+        _notify("suspicious_key", f"user={user}\n{_client_meta()}\nevent={ev}\nkey={key_name}\nclient_ts={client_ts}")
+
+    _drop_query_params(["sec_event", "sec_key", "sec_ts"])
+    st.rerun()
 
 
 def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남은 시간", generation: int = 0) -> None:
@@ -262,11 +301,24 @@ def render_capture_guard() -> None:
           try { window.parent.alert("캡처 키(PrintScreen)가 감지되었습니다."); } catch (e) {}
         }
 
+        function reportSecuritySignal(eventName, keyName) {
+          try {
+            const u = new URL(window.location.href);
+            u.searchParams.set("sec_event", eventName);
+            u.searchParams.set("sec_key", keyName);
+            u.searchParams.set("sec_ts", String(Date.now()));
+            window.location.replace(u.toString());
+          } catch (e) {
+            // no-op
+          }
+        }
+
         d.addEventListener("keydown", function(e) {
           const k = (e && e.key) ? String(e.key) : "";
           const code = (e && e.keyCode) ? Number(e.keyCode) : 0;
           if (k === "PrintScreen" || code === 44) {
             triggerGuard();
+            reportSecuritySignal("capture_key", "PrintScreen");
             e.preventDefault();
           }
         }, true);
@@ -488,6 +540,7 @@ def _clear_auth() -> None:
         SESSION_PIN_ATTEMPTS,
         SESSION_ACCESS_LOGGED,
         SESSION_COUNTDOWN_GEN,
+        SESSION_LAST_SECURITY_SIGNAL,
         "last_view_logged",
     ]:
         if k in st.session_state:
@@ -497,7 +550,7 @@ def _clear_auth() -> None:
 def _clear_auth_runtime_only() -> None:
     # 콜백 직후 PIN 대기 상태(SESSION_PENDING_USER)는 유지해야 하므로
     # 루프 방지를 위해 pending을 제외한 런타임 인증 정보만 정리한다.
-    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED, SESSION_COUNTDOWN_GEN, "last_view_logged"]:
+    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_AUTH_ROLE, SESSION_AUTH_SID, SESSION_PIN_ATTEMPTS, SESSION_ACCESS_LOGGED, SESSION_COUNTDOWN_GEN, SESSION_LAST_SECURITY_SIGNAL, "last_view_logged"]:
         if k in st.session_state:
             del st.session_state[k]
 
@@ -590,11 +643,13 @@ def enforce_auth_gate() -> None:
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
+        sid = str(st.session_state.get(SESSION_AUTH_SID, ""))
+        _consume_security_signal(user=user, sid=sid)
         if not st.session_state.get(SESSION_ACCESS_LOGGED):
             append_access_log(
                 "dashboard_access",
                 user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
-                meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")},
+                meta={**_client_meta_dict(), "sid": sid},
             )
             st.session_state[SESSION_ACCESS_LOGGED] = True
         with st.sidebar:
