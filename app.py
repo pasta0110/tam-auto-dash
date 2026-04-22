@@ -28,8 +28,33 @@ st.set_page_config(
 # 2. 전역 스타일 적용 (CSS)
 st.markdown(config.CSS_STYLE, unsafe_allow_html=True)
 
+# 2.3 사이드바 토글(넣기/빼기)
+if "ui_sidebar_hidden" not in st.session_state:
+    st.session_state["ui_sidebar_hidden"] = False
+
+toggle_label = "📂 메뉴 펼치기" if st.session_state["ui_sidebar_hidden"] else "📁 메뉴 접기"
+if st.button(toggle_label, key="toggle_sidebar_btn"):
+    st.session_state["ui_sidebar_hidden"] = not st.session_state["ui_sidebar_hidden"]
+    st.rerun()
+
+if st.session_state["ui_sidebar_hidden"]:
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] {display: none !important;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
 enforce_auth_gate()
+
+# 2.6 세션 남은 시간 상단 표시 (보안 로그인 활성 상태)
+if st.session_state.get("auth_ok") and st.session_state.get("auth_until"):
+    remain_sec = max(0, int(float(st.session_state.get("auth_until", 0)) - time.time()))
+    mm, ss = divmod(remain_sec, 60)
+    st.caption(f"🔐 세션 남은 시간: {mm:02d}:{ss:02d}")
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)

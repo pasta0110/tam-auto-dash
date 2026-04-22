@@ -245,8 +245,11 @@ def enforce_auth_gate() -> None:
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
+        remain_sec = max(0, int(float(st.session_state.get(SESSION_AUTH_UNTIL, 0)) - time.time()))
+        mm, ss = divmod(remain_sec, 60)
         with st.sidebar:
             st.caption(f"🔐 로그인: {user.get('nickname') or user.get('email') or user.get('id')}")
+            st.caption(f"⏱ 세션: {mm:02d}:{ss:02d}")
             if st.button("로그아웃", key="auth_logout_btn"):
                 _clear_auth()
                 _notify("logout", _client_meta())
