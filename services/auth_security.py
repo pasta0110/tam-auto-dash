@@ -225,6 +225,14 @@ def _clear_auth() -> None:
             del st.session_state[k]
 
 
+def _clear_auth_runtime_only() -> None:
+    # 콜백 직후 PIN 대기 상태(SESSION_PENDING_USER)는 유지해야 하므로
+    # 루프 방지를 위해 pending을 제외한 런타임 인증 정보만 정리한다.
+    for k in [SESSION_AUTH, SESSION_AUTH_USER, SESSION_AUTH_UNTIL, SESSION_PIN_ATTEMPTS]:
+        if k in st.session_state:
+            del st.session_state[k]
+
+
 def enforce_auth_gate() -> None:
     cfg = _settings()
     if not cfg["enabled"]:
@@ -242,7 +250,7 @@ def enforce_auth_gate() -> None:
         return
 
     # session expired
-    _clear_auth()
+    _clear_auth_runtime_only()
 
     # callback handling
     code = str(st.query_params.get("code", "")).strip()
