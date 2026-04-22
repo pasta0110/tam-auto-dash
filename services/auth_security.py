@@ -279,6 +279,58 @@ def render_capture_guard() -> None:
     components.html(html, height=0)
 
 
+def render_interaction_guard() -> None:
+    enabled = _to_bool(_sget("AUTH_INTERACTION_GUARD_ENABLED", True), True)
+    if not enabled:
+        return
+    html = """
+    <script>
+    (function() {
+      try {
+        const d = window.parent && window.parent.document ? window.parent.document : document;
+        if (!d || d.getElementById("interaction-guard-installed")) return;
+
+        const mark = d.createElement("div");
+        mark.id = "interaction-guard-installed";
+        mark.style.display = "none";
+        d.body.appendChild(mark);
+
+        const style = d.createElement("style");
+        style.id = "interaction-guard-style";
+        style.textContent = `
+          html, body, [data-testid="stAppViewContainer"] {
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
+          }
+          img, svg, canvas {
+            -webkit-user-drag: none !important;
+            user-drag: none !important;
+          }
+        `;
+        d.head.appendChild(style);
+
+        const block = function(e) {
+          if (!e) return;
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        };
+
+        d.addEventListener("contextmenu", block, true);
+        d.addEventListener("dragstart", block, true);
+        d.addEventListener("selectstart", block, true);
+      } catch (err) {
+        // no-op
+      }
+    })();
+    </script>
+    """
+    components.html(html, height=0)
+
+
 def _settings() -> dict[str, Any]:
     session_minutes = _to_int(_sget("AUTH_SESSION_MINUTES", 10), 10)
     if session_minutes <= 0:
@@ -549,6 +601,7 @@ def enforce_auth_gate() -> None:
                 st.session_state.get(SESSION_AUTH_UNTIL, 0),
                 generation=generation,
             )
+            render_interaction_guard()
             render_capture_guard()
             if st.button("로그아웃", key="auth_logout_btn"):
                 append_access_log(
