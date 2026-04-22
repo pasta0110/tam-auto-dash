@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 import secrets
 import time
+import base64
 from typing import Any
 from urllib.parse import urlencode
 
@@ -92,7 +94,42 @@ def _settings() -> dict[str, Any]:
         "pin_sha256": str(_sget("AUTH_PIN_SHA256", "")).strip().lower(),
         "pin_max_attempts": _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5),
         "session_hours": _to_int(_sget("AUTH_SESSION_HOURS", 12), 12),
+        "state_secret": str(_sget("AUTH_STATE_SECRET", "")).strip(),
     }
+
+
+def _b64u(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64u_decode(s: str) -> bytes:
+    s = s + ("=" * ((4 - len(s) % 4) % 4))
+    return base64.urlsafe_b64decode(s.encode("ascii"))
+
+
+def _make_state_token(secret_key: str) -> str:
+    ts = str(int(time.time()))
+    nonce = secrets.token_urlsafe(12)
+    payload = f"{ts}.{nonce}"
+    sig = hmac.new(secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()
+    return f"{payload}.{_b64u(sig)}"
+
+
+def _verify_state_token(token: str, secret_key: str, ttl_sec: int = 900) -> bool:
+    try:
+        p = (token or "").split(".")
+        if len(p) < 3:
+            return False
+        ts = int(p[0])
+        nonce = p[1]
+        sig_in = p[2]
+        if (int(time.time()) - ts) > ttl_sec:
+            return False
+        payload = f"{ts}.{nonce}"
+        sig = hmac.new(secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).digest()
+        return hmac.compare_digest(_b64u(sig), sig_in)
+    except Exception:
+        return False
 
 
 def _build_kakao_login_url(client_id: str, redirect_uri: str, state: str) -> str:
@@ -191,8 +228,8 @@ def enforce_auth_gate() -> None:
     code = str(st.query_params.get("code", "")).strip()
     state = str(st.query_params.get("state", "")).strip()
     if code:
-        expected_state = str(st.session_state.get(SESSION_OAUTH_STATE, "")).strip()
-        if not expected_state or state != expected_state:
+        state_secret = cfg["state_secret"] or cfg["client_id"] or "kakao-auth"
+        if not _verify_state_token(state, state_secret, ttl_sec=900):
             st.error("로그인 검증(state) 실패. 다시 로그인 해주세요.")
             _notify("oauth_state_failed", _client_meta())
             st.stop()
@@ -270,7 +307,8 @@ def enforce_auth_gate() -> None:
         st.error("인증 설정 누락: " + ", ".join(missing))
         st.stop()
 
-    state = secrets.token_urlsafe(24)
+    state_secret = cfg["state_secret"] or cfg["client_id"] or "kakao-auth"
+    state = _make_state_token(state_secret)
     st.session_state[SESSION_OAUTH_STATE] = state
     login_url = _build_kakao_login_url(cfg["client_id"], cfg["redirect_uri"], state)
 
