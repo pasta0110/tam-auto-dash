@@ -766,17 +766,8 @@ def enforce_auth_gate() -> None:
     login_url = _build_kakao_login_url(
         cfg["client_id"], cfg["redirect_uri"], state, through_account=True, prompt_login=True
     )
-    # 보조: 일반 경로(카카오톡/카카오계정 자동 선택)
-    login_url_default = _build_kakao_login_url(
-        cfg["client_id"], cfg["redirect_uri"], state, through_account=False, prompt_login=False
-    )
-
     st.title("🔐 보안 로그인")
     st.write("이 대시보드는 승인된 사용자만 접근할 수 있습니다.")
     st.link_button("카카오계정으로 로그인 (권장)", login_url, use_container_width=True)
-    st.link_button("대체 경로로 로그인", login_url_default, use_container_width=True)
-    st.caption("버튼이 반응하지 않으면 아래 링크를 길게 눌러 새 탭에서 열어주세요.")
-    st.markdown(f"[권장 로그인 링크 직접 열기]({login_url})")
-    st.markdown(f"[대체 로그인 링크 직접 열기]({login_url_default})")
     st.caption("로그인 후 화이트리스트 + PIN 인증을 통과해야 대시보드가 열립니다.")
     st.stop()
