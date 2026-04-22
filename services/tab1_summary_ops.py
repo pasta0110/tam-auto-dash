@@ -4,6 +4,8 @@ from datetime import date as _date
 
 import pandas as pd
 
+MAIN_PRODUCT_ROWS = ["매트리스(기존)", "매트리스(온열)", "매트리스 계", "파운데이션", "프레임"]
+
 
 def safe_to_datetime(s: pd.Series) -> pd.Series:
     try:
@@ -78,16 +80,22 @@ def split_month_day_df(df: pd.DataFrame, date_col: str, y_date, m_key: str, yest
 
 def build_main_rows(curr_df: pd.DataFrame, day_df: pd.DataFrame, date_header: str) -> pd.DataFrame:
     rows = []
-    for cat in ["매트리스", "파운데이션", "프레임"]:
-        if cat == "프레임":
-            m = curr_df[curr_df["품목구분"] == cat].shape[0]
-            d = day_df[day_df["품목구분"] == cat].shape[0]
-        else:
-            m = int(curr_df[curr_df["품목구분"] == cat]["수량"].sum())
-            d = int(day_df[day_df["품목구분"] == cat]["수량"].sum())
+    for cat in MAIN_PRODUCT_ROWS:
+        m = product_metric(curr_df, cat)
+        d = product_metric(day_df, cat)
         rows.append({"품목": cat, "당월 합계": m, date_header: d})
     out = pd.DataFrame(rows)
-    out.loc[len(out)] = ["합계", out["당월 합계"].sum(), out[date_header].sum()]
+    m_total = (
+        product_metric(curr_df, "매트리스 계")
+        + product_metric(curr_df, "파운데이션")
+        + product_metric(curr_df, "프레임")
+    )
+    d_total = (
+        product_metric(day_df, "매트리스 계")
+        + product_metric(day_df, "파운데이션")
+        + product_metric(day_df, "프레임")
+    )
+    out.loc[len(out)] = ["합계", m_total, d_total]
     return out
 
 
@@ -102,3 +110,36 @@ def build_panel_rows(curr_df: pd.DataFrame, day_df: pd.DataFrame, date_header: s
     out.loc[len(out)] = [total_label, out["당월 합계"].sum(), out[date_header].sum()]
     return out
 
+
+def _is_hot_mattress(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(False, index=pd.Index([]))
+    name_col = df["상품명"].astype(str) if "상품명" in df.columns else pd.Series("", index=df.index)
+    item_col = df["품목구분"].astype(str) if "품목구분" in df.columns else pd.Series("", index=df.index)
+    return item_col.eq("매트리스") & name_col.str.contains("온열", na=False)
+
+
+def _sum_qty(df: pd.DataFrame, mask: pd.Series) -> int:
+    if "수량" not in df.columns:
+        return int(mask.sum())
+    return int(pd.to_numeric(df.loc[mask, "수량"], errors="coerce").fillna(0).sum())
+
+
+def product_metric(df: pd.DataFrame, label: str) -> int:
+    if df is None or df.empty:
+        return 0
+
+    item_col = df["품목구분"].astype(str) if "품목구분" in df.columns else pd.Series("", index=df.index)
+    hot_mask = _is_hot_mattress(df)
+
+    if label == "매트리스(온열)":
+        return _sum_qty(df, hot_mask)
+    if label == "매트리스(기존)":
+        return _sum_qty(df, item_col.eq("매트리스") & ~hot_mask)
+    if label == "매트리스 계":
+        return _sum_qty(df, item_col.eq("매트리스"))
+    if label == "파운데이션":
+        return _sum_qty(df, item_col.eq("파운데이션"))
+    if label == "프레임":
+        return int(item_col.eq("프레임").sum())
+    return 0

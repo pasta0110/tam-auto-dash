@@ -13,6 +13,8 @@ from services.tab1_summary_ops import (
     split_month_day_df,
     build_main_rows,
     build_panel_rows,
+    MAIN_PRODUCT_ROWS,
+    product_metric,
 )
 
 
@@ -84,22 +86,19 @@ def render(order_df, delivery_df, ana_df, ctx):
             day_delivery = monthly_delivery[monthly_delivery['배송예정일'].astype(str).str.contains(yesterday_str, na=False)]
         
         rows = []
-        for cat in ['매트리스', '파운데이션', '프레임']:
-            if cat == '프레임':
-                rows.append({
-                    '품목': cat,
-                    '당월 합계': monthly_delivery[monthly_delivery['품목구분'] == cat].shape[0],
-                    date_header: day_delivery[day_delivery['품목구분'] == cat].shape[0]
-                })
-            else:
-                rows.append({
-                    '품목': cat,
-                    '당월 합계': int(monthly_delivery[monthly_delivery['품목구분'] == cat]['수량'].sum()),
-                    date_header: int(day_delivery[day_delivery['품목구분'] == cat]['수량'].sum())
-                })
+        for cat in MAIN_PRODUCT_ROWS:
+            rows.append({
+                '품목': cat,
+                '당월 합계': product_metric(monthly_delivery, cat),
+                date_header: product_metric(day_delivery, cat),
+            })
         
         df_delivery = pd.DataFrame(rows)
-        df_delivery.loc[len(df_delivery)] = ['합계', df_delivery['당월 합계'].sum(), df_delivery[date_header].sum()]
+        df_delivery.loc[len(df_delivery)] = [
+            '합계',
+            product_metric(monthly_delivery, '매트리스 계') + product_metric(monthly_delivery, '파운데이션') + product_metric(monthly_delivery, '프레임'),
+            product_metric(day_delivery, '매트리스 계') + product_metric(day_delivery, '파운데이션') + product_metric(day_delivery, '프레임'),
+        ]
         
         p_rows = []
         for p_num in ['01', '05']:
@@ -141,18 +140,21 @@ def render(order_df, delivery_df, ana_df, ctx):
         p_ret_f = ret_done_df[(ret_done_df[ord_date_col] < standard_date) | (ret_done_df[ord_date_col].isna())]
         
         rows_ret = []
-        for cat in ['매트리스', '파운데이션', '프레임']:
-            if cat == '프레임':
-                m_qty = m_ret_f[m_ret_f['품목구분'] == cat].shape[0]
-                p_qty = p_ret_f[p_ret_f['품목구분'] == cat].shape[0]
-            else:
-                m_qty = int(m_ret_f[m_ret_f['품목구분'] == cat]['수량'].sum())
-                p_qty = int(p_ret_f[p_ret_f['품목구분'] == cat]['수량'].sum())
-            
+        for cat in MAIN_PRODUCT_ROWS:
+            m_qty = product_metric(m_ret_f, cat)
+            p_qty = product_metric(p_ret_f, cat)
             rows_ret.append({'품목': cat, '당월주문 반품': m_qty, '이전주문 반품': p_qty, '합계': m_qty + p_qty})
             
         df_ret = pd.DataFrame(rows_ret)
-        df_ret.loc[len(df_ret)] = ['📌 합계', df_ret['당월주문 반품'].sum(), df_ret['이전주문 반품'].sum(), df_ret['합계'].sum()]
+        df_ret.loc[len(df_ret)] = [
+            '📌 합계',
+            product_metric(m_ret_f, '매트리스 계') + product_metric(m_ret_f, '파운데이션') + product_metric(m_ret_f, '프레임'),
+            product_metric(p_ret_f, '매트리스 계') + product_metric(p_ret_f, '파운데이션') + product_metric(p_ret_f, '프레임'),
+            (
+                product_metric(m_ret_f, '매트리스 계') + product_metric(m_ret_f, '파운데이션') + product_metric(m_ret_f, '프레임')
+                + product_metric(p_ret_f, '매트리스 계') + product_metric(p_ret_f, '파운데이션') + product_metric(p_ret_f, '프레임')
+            ),
+        ]
         
         # 판넬 반품
         p_rows_ret = []
@@ -177,14 +179,9 @@ def render(order_df, delivery_df, ana_df, ctx):
         st.subheader("💰 4. 최종 정산")
         
         calc_rows = []
-        for cat in ['매트리스', '파운데이션', '프레임']:
-            if cat == '프레임':
-                d_qty = monthly_delivery[monthly_delivery['품목구분'] == cat].shape[0]
-                r_qty = ret_done_df[ret_done_df['품목구분'] == cat].shape[0]
-            else:
-                d_qty = int(monthly_delivery[monthly_delivery['품목구분'] == cat]['수량'].sum())
-                r_qty = int(ret_done_df[ret_done_df['품목구분'] == cat]['수량'].sum())
-                
+        for cat in MAIN_PRODUCT_ROWS:
+            d_qty = product_metric(monthly_delivery, cat)
+            r_qty = product_metric(ret_done_df, cat)
             calc_rows.append({
                 '품목': cat,
                 '정상 출고': d_qty,
@@ -195,9 +192,12 @@ def render(order_df, delivery_df, ana_df, ctx):
         df_calc = pd.DataFrame(calc_rows)
         df_calc.loc[len(df_calc)] = [
             '💰 총계', 
-            df_calc['정상 출고'].sum(), 
-            df_calc['반품 완료'].sum(), 
-            df_calc['최종 정산'].sum()
+            product_metric(monthly_delivery, '매트리스 계') + product_metric(monthly_delivery, '파운데이션') + product_metric(monthly_delivery, '프레임'),
+            product_metric(ret_done_df, '매트리스 계') + product_metric(ret_done_df, '파운데이션') + product_metric(ret_done_df, '프레임'),
+            (
+                product_metric(monthly_delivery, '매트리스 계') + product_metric(monthly_delivery, '파운데이션') + product_metric(monthly_delivery, '프레임')
+                - (product_metric(ret_done_df, '매트리스 계') + product_metric(ret_done_df, '파운데이션') + product_metric(ret_done_df, '프레임'))
+            ),
         ]
         
         # 판넬 정산
