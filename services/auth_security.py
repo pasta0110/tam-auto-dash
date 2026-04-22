@@ -302,12 +302,25 @@ def render_capture_guard() -> None:
 
         function reportSecuritySignal(eventName, keyName) {
           try {
-            const p = (window.parent && window.parent.location) ? window.parent : window;
-            const u = new URL(p.location.href);
+            const u = new URL((window.top && window.top.location) ? window.top.location.href : window.location.href);
             u.searchParams.set("sec_event", eventName);
             u.searchParams.set("sec_key", keyName);
             u.searchParams.set("sec_ts", String(Date.now()));
-            p.location.replace(u.toString());
+            const target = u.toString();
+            // top -> parent -> self 순으로 강제 내비게이션 시도
+            try {
+              if (window.top && window.top.location) {
+                window.top.location.assign(target);
+                return;
+              }
+            } catch (e1) {}
+            try {
+              if (window.parent && window.parent.location) {
+                window.parent.location.assign(target);
+                return;
+              }
+            } catch (e2) {}
+            window.location.assign(target);
           } catch (e) {
             // no-op
           }
