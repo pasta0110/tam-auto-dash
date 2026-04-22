@@ -205,7 +205,7 @@ def _settings() -> dict[str, Any]:
     if session_minutes <= 0:
         # backward compatibility
         session_minutes = max(1, _to_int(_sget("AUTH_SESSION_HOURS", 12), 12) * 60)
-    return {
+    cfg = {
         "enabled": _to_bool(_sget("AUTH_ENABLED", False), False),
         "client_id": str(_sget("AUTH_KAKAO_CLIENT_ID", "")).strip(),
         "client_secret": str(_sget("AUTH_KAKAO_CLIENT_SECRET", "")).strip(),
@@ -223,6 +223,9 @@ def _settings() -> dict[str, Any]:
         "session_minutes": session_minutes,
         "state_secret": str(_sget("AUTH_STATE_SECRET", "")).strip(),
     }
+    # 관리자 ID는 화이트리스트에도 자동 포함되게 처리
+    cfg["whitelist_ids"] = set(cfg["whitelist_ids"]) | set(cfg["admin_ids"])
+    return cfg
 
 
 def _b64u(data: bytes) -> str:
