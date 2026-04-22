@@ -102,7 +102,8 @@ def _build_kakao_login_url(client_id: str, redirect_uri: str, state: str) -> str
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "state": state,
-            "scope": "profile_nickname account_email",
+            # account_email 권한이 없는 앱에서도 동작하도록 최소 scope만 사용
+            "scope": "profile_nickname",
         }
     )
     return f"https://kauth.kakao.com/oauth/authorize?{q}"
@@ -204,7 +205,11 @@ def enforce_auth_gate() -> None:
             st.stop()
 
         if not _is_whitelisted(user, cfg["whitelist_ids"], cfg["whitelist_emails"]):
-            st.error("화이트리스트에 없는 계정입니다.")
+            st.error(
+                "화이트리스트에 없는 계정입니다.\n"
+                f"카카오ID: {user.get('id','-')} / 닉네임: {user.get('nickname','-')}\n"
+                "이 ID를 AUTH_KAKAO_WHITELIST_IDS에 추가하세요."
+            )
             _notify("whitelist_denied", f"user={user}\n{_client_meta()}")
             st.stop()
 
