@@ -134,6 +134,53 @@ def render_live_session_countdown(until_ts: float, label: str = "🔐 세션 남
     components.html(html, height=28)
 
 
+def render_session_popup_and_autologout(until_ts: float) -> None:
+    try:
+        end_ms = int(float(until_ts) * 1000)
+    except Exception:
+        return
+    comp_id = f"session-guard-{abs(hash(end_ms)) % 1000000}"
+    html = f"""
+    <div id="{comp_id}" style="display:none;"></div>
+    <script>
+    (function() {{
+      const endMs = {end_ms};
+      const popupKey = "session_popup_" + endMs;
+
+      function withParam(url, key, value) {{
+        const u = new URL(url, window.location.origin);
+        u.searchParams.set(key, value);
+        return u.toString();
+      }}
+
+      function tick() {{
+        const now = Date.now();
+        const remain = Math.floor((endMs - now) / 1000);
+
+        if (remain <= 0) {{
+          // 만료 시 자동 로그아웃 트리거
+          window.location.replace(withParam(window.location.href, "force_logout", "1"));
+          return;
+        }}
+
+        if (remain <= 60 && !sessionStorage.getItem(popupKey)) {{
+          sessionStorage.setItem(popupKey, "1");
+          const ok = window.confirm("세션이 1분 내 만료됩니다. 로그인 시간을 연장할까요?");
+          if (ok) {{
+            window.location.replace(withParam(window.location.href, "extend_session", "1"));
+            return;
+          }}
+        }}
+      }}
+
+      tick();
+      setInterval(tick, 1000);
+    }})();
+    </script>
+    """
+    components.html(html, height=0)
+
+
 def _settings() -> dict[str, Any]:
     session_minutes = _to_int(_sget("AUTH_SESSION_MINUTES", 10), 10)
     if session_minutes <= 0:
@@ -274,12 +321,32 @@ def enforce_auth_gate() -> None:
     if not cfg["enabled"]:
         return
 
+    # query-param control hooks from client-side popup/autologout
+    q_force = str(st.query_params.get("force_logout", "")).strip() == "1"
+    q_extend = str(st.query_params.get("extend_session", "")).strip() == "1"
+    if q_force:
+        _clear_auth()
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        st.rerun()
+    if q_extend and st.session_state.get(SESSION_AUTH):
+        st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        _notify("session_extended", _client_meta())
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        st.rerun()
+
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
         with st.sidebar:
             st.caption(f"🔐 로그인: {user.get('nickname') or user.get('email') or user.get('id')}")
             render_live_session_countdown(st.session_state.get(SESSION_AUTH_UNTIL, 0), label="⏱ 세션")
+            render_session_popup_and_autologout(st.session_state.get(SESSION_AUTH_UNTIL, 0))
             if st.button("로그아웃", key="auth_logout_btn"):
                 _clear_auth()
                 _notify("logout", _client_meta())

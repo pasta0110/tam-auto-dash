@@ -10,7 +10,7 @@ from services.app_runtime import (
     build_caption_parts,
     notify_integrity_mismatch_once,
 )
-from services.auth_security import enforce_auth_gate, render_live_session_countdown
+from services.auth_security import enforce_auth_gate
 from services.app_contract import run_contract_gate
 from services.app_processed import get_processed_payload, ensure_payload_computed
 from services.app_ops import should_show_ops, render_ops_panel
@@ -49,10 +49,6 @@ if st.session_state["ui_sidebar_hidden"]:
 
 # 2.5 선택형 보안 게이트 (AUTH_ENABLED=true일 때만 작동)
 enforce_auth_gate()
-
-# 2.6 세션 남은 시간 상단 표시 (보안 로그인 활성 상태)
-if st.session_state.get("auth_ok") and st.session_state.get("auth_until"):
-    render_live_session_countdown(st.session_state.get("auth_until", 0), label="🔐 세션 남은 시간")
 
 # 3. 데이터 로드 및 전처리
 # (캐싱은 data_loader 내부에서 처리됨)
