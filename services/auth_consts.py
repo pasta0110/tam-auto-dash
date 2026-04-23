@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+SESSION_AUTH = "auth_ok"
+SESSION_AUTH_USER = "auth_user"
+SESSION_AUTH_UNTIL = "auth_until"
+SESSION_AUTH_ROLE = "auth_role"
+SESSION_AUTH_SID = "auth_sid"
+SESSION_OAUTH_STATE = "auth_oauth_state"
+SESSION_PENDING_USER = "auth_pending_user"
+SESSION_PIN_ATTEMPTS = "auth_pin_attempts"
+SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
+SESSION_ACCESS_LOGGED = "auth_access_logged"
+SESSION_COUNTDOWN_GEN = "auth_countdown_gen"
+SESSION_LAST_SECURITY_SIGNAL = "auth_last_security_signal"
+SESSION_LAST_ACTIVITY_EXTEND = "auth_last_activity_extend"

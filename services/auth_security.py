@@ -14,6 +14,43 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from services.access_log import append_access_log
+from services.auth_common import (
+    client_meta,
+    client_meta_dict,
+    consume_security_signal as consume_security_signal_v2,
+    new_countdown_generation,
+    notify,
+    notify_whitelist_request_once as notify_whitelist_request_once_v2,
+)
+from services.auth_config import get_auth_settings
+from services.auth_consts import (
+    SESSION_ACCESS_LOGGED,
+    SESSION_AUTH,
+    SESSION_AUTH_ROLE,
+    SESSION_AUTH_SID,
+    SESSION_AUTH_UNTIL,
+    SESSION_AUTH_USER,
+    SESSION_COUNTDOWN_GEN,
+    SESSION_OAUTH_STATE,
+    SESSION_PENDING_USER,
+    SESSION_PIN_ATTEMPTS,
+)
+from services.auth_oauth import (
+    build_kakao_login_url,
+    exchange_token,
+    get_role,
+    is_whitelisted,
+    load_kakao_user,
+    make_state_token,
+    verify_pin,
+    verify_state_token,
+)
+from services.auth_session import (
+    clear_auth,
+    clear_auth_runtime_only,
+    get_auth_context as get_auth_context_v2,
+    render_watermark_overlay as render_watermark_overlay_v2,
+)
 from services.notifiers import build_telegram_notifier
 
 
@@ -728,7 +765,7 @@ def render_watermark_overlay() -> None:
 
 
 def enforce_auth_gate() -> None:
-    cfg = _settings()
+    cfg = get_auth_settings()
     if not cfg["enabled"]:
         return
 
@@ -738,8 +775,8 @@ def enforce_auth_gate() -> None:
     q_activity = str(st.query_params.get("activity_extend", "")).strip() == "1"
     if q_force:
         if st.session_state.get(SESSION_AUTH_USER):
-            append_access_log("session_expired_logout", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
-        _clear_auth()
+            append_access_log("session_expired_logout", user=st.session_state.get(SESSION_AUTH_USER), meta={**client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
+        clear_auth()
         try:
             st.query_params.clear()
         except Exception:
@@ -747,9 +784,9 @@ def enforce_auth_gate() -> None:
         st.rerun()
     if q_extend and st.session_state.get(SESSION_AUTH):
         st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
-        st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
-        append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
-        _notify("session_extended", _client_meta())
+        st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
+        append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
+        notify("session_extended", client_meta())
         try:
             st.query_params.clear()
         except Exception:
@@ -758,7 +795,7 @@ def enforce_auth_gate() -> None:
     if q_activity and st.session_state.get(SESSION_AUTH):
         # 사용자 활동 기반 자동 연장: 로그/알림은 남기지 않고 세션 만료와 카운트다운만 즉시 리셋
         st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
-        st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
+        st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
         try:
             st.query_params.clear()
         except Exception:
@@ -769,12 +806,12 @@ def enforce_auth_gate() -> None:
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
         user = st.session_state.get(SESSION_AUTH_USER) or {}
         sid = str(st.session_state.get(SESSION_AUTH_SID, ""))
-        _consume_security_signal(user=user, sid=sid)
+        consume_security_signal_v2(user=user, sid=sid)
         if not st.session_state.get(SESSION_ACCESS_LOGGED):
             append_access_log(
                 "dashboard_access",
                 user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
-                meta={**_client_meta_dict(), "sid": sid},
+                meta={**client_meta_dict(), "sid": sid},
             )
             st.session_state[SESSION_ACCESS_LOGGED] = True
         with st.sidebar:
@@ -799,57 +836,57 @@ def enforce_auth_gate() -> None:
             render_capture_guard()
             if st.button("세션 연장", key="auth_extend_btn", use_container_width=True):
                 st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
-                st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
+                st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
                 append_access_log(
                     "session_extended_manual",
                     user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
-                    meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, ""), "detail": "sidebar_button"},
+                    meta={**client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, ""), "detail": "sidebar_button"},
                 )
                 st.rerun()
             if st.button("로그아웃", key="auth_logout_btn"):
                 append_access_log(
                     "logout",
                     user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
-                    meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")},
+                    meta={**client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")},
                 )
-                _clear_auth()
-                _notify("logout", _client_meta())
+                clear_auth()
+                notify("logout", client_meta())
                 st.rerun()
         return
 
     # session expired
-    _clear_auth_runtime_only()
+    clear_auth_runtime_only()
 
     # callback handling
     code = str(st.query_params.get("code", "")).strip()
     state = str(st.query_params.get("state", "")).strip()
     if code:
         state_secret = cfg["state_secret"] or cfg["client_id"] or "kakao-auth"
-        if not _verify_state_token(state, state_secret, ttl_sec=900):
+        if not verify_state_token(state, state_secret, ttl_sec=900):
             st.error("로그인 검증(state) 실패. 다시 로그인 해주세요.")
-            _notify("oauth_state_failed", _client_meta())
+            notify("oauth_state_failed", client_meta())
             st.stop()
         try:
-            token = _exchange_token(cfg["client_id"], cfg["client_secret"], cfg["redirect_uri"], code)
-            user = _load_kakao_user(token)
+            token = exchange_token(cfg["client_id"], cfg["client_secret"], cfg["redirect_uri"], code)
+            user = load_kakao_user(token)
         except Exception as e:
             st.error(f"카카오 인증 처리 실패: {e}")
-            _notify("oauth_exchange_failed", f"{_client_meta()}\nerr={e}")
+            notify("oauth_exchange_failed", f"{client_meta()}\nerr={e}")
             st.stop()
 
-        if not _is_whitelisted(user, cfg["whitelist_ids"], cfg["whitelist_emails"]):
-            _notify_whitelist_request_once(user)
-            append_access_log("whitelist_denied", user=user, meta={**_client_meta_dict(), "detail": "not in whitelist"})
+        if not is_whitelisted(user, cfg["whitelist_ids"], cfg["whitelist_emails"]):
+            notify_whitelist_request_once_v2(user)
+            append_access_log("whitelist_denied", user=user, meta={**client_meta_dict(), "detail": "not in whitelist"})
             st.error(
                 "화이트리스트에 없는 계정입니다.\n"
                 f"카카오ID: {user.get('id','-')} / 닉네임: {user.get('nickname','-')}\n"
                 "이 ID를 AUTH_KAKAO_WHITELIST_IDS에 추가하세요."
             )
             st.code(f'AUTH_KAKAO_WHITELIST_IDS = ["{user.get("id","")}", ...]', language="toml")
-            _notify("whitelist_denied", f"user={user}\n{_client_meta()}")
+            notify("whitelist_denied", f"user={user}\n{client_meta()}")
             st.stop()
 
-        role = _get_role(user, cfg["admin_ids"], cfg["admin_emails"])
+        role = get_role(user, cfg["admin_ids"], cfg["admin_emails"])
         st.session_state[SESSION_PENDING_USER] = {**user, "role": role}
         try:
             st.query_params.clear()
@@ -891,8 +928,8 @@ def enforce_auth_gate() -> None:
         attempts = int(st.session_state.get(SESSION_PIN_ATTEMPTS, 0))
         if attempts >= cfg["pin_max_attempts"]:
             st.error(f"PIN 실패 {cfg['pin_max_attempts']}회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
-            append_access_log("pin_locked", user=pending, meta={**_client_meta_dict()})
-            _notify("pin_locked", f"user={pending}\n{_client_meta()}")
+            append_access_log("pin_locked", user=pending, meta={**client_meta_dict()})
+            notify("pin_locked", f"user={pending}\n{client_meta()}")
             st.stop()
 
         pin_input = st.text_input(pin_role_hint, type="password", key="auth_pin_input")
@@ -903,21 +940,21 @@ def enforce_auth_gate() -> None:
             cancel = st.button("취소", key="auth_pin_cancel")
 
         if cancel:
-            _clear_auth()
+            clear_auth()
             st.rerun()
 
         if verify:
             login_role = "user"
             verified = False
             if base_role == "admin":
-                if _verify_pin(pin_input, admin_pin_code, admin_pin_sha256):
+                if verify_pin(pin_input, admin_pin_code, admin_pin_sha256):
                     verified = True
                     login_role = "admin"
-                elif _verify_pin(pin_input, user_pin_code, user_pin_sha256):
+                elif verify_pin(pin_input, user_pin_code, user_pin_sha256):
                     verified = True
                     login_role = "user"
             else:
-                if _verify_pin(pin_input, user_pin_code, user_pin_sha256):
+                if verify_pin(pin_input, user_pin_code, user_pin_sha256):
                     verified = True
                     login_role = "user"
 
@@ -930,11 +967,11 @@ def enforce_auth_gate() -> None:
                 st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
                 st.session_state[SESSION_ACCESS_LOGGED] = False
-                st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
+                st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
                 if SESSION_PENDING_USER in st.session_state:
                     del st.session_state[SESSION_PENDING_USER]
-                append_access_log("login_success", user={**pending, "role": login_role}, meta={**_client_meta_dict(), "sid": sid, "mode": login_role})
-                _notify("login_success", f"user={pending}\nmode={login_role}\n{_client_meta()}")
+                append_access_log("login_success", user={**pending, "role": login_role}, meta={**client_meta_dict(), "sid": sid, "mode": login_role})
+                notify("login_success", f"user={pending}\nmode={login_role}\n{client_meta()}")
                 st.rerun()
             else:
                 st.session_state[SESSION_PIN_ATTEMPTS] = attempts + 1
@@ -943,8 +980,8 @@ def enforce_auth_gate() -> None:
                     st.error(f"PIN 실패 {cfg['pin_max_attempts']}회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
                 else:
                     st.error(f"PIN 불일치 (남은 시도: {left})")
-                append_access_log("pin_failed", user=pending, meta={**_client_meta_dict(), "detail": f"remain={left}"})
-                _notify("pin_failed", f"user={pending}\nremain={left}\n{_client_meta()}")
+                append_access_log("pin_failed", user=pending, meta={**client_meta_dict(), "detail": f"remain={left}"})
+                notify("pin_failed", f"user={pending}\nremain={left}\n{client_meta()}")
         st.stop()
 
     # first step: show login button
@@ -954,10 +991,10 @@ def enforce_auth_gate() -> None:
         st.stop()
 
     state_secret = cfg["state_secret"] or cfg["client_id"] or "kakao-auth"
-    state = _make_state_token(state_secret)
+    state = make_state_token(state_secret)
     st.session_state[SESSION_OAUTH_STATE] = state
     # 기본: 브라우저 계정 로그인 강제 (모바일 간편로그인 세션/네트워크 오류 회피)
-    login_url = _build_kakao_login_url(
+    login_url = build_kakao_login_url(
         cfg["client_id"], cfg["redirect_uri"], state, through_account=True, prompt_login=True
     )
     st.title("🔐 보안 로그인")
@@ -967,3 +1004,12 @@ def enforce_auth_gate() -> None:
     st.link_button("카카오 로그아웃 (테스트용)", kakao_logout_url, use_container_width=True)
     st.caption("로그인 후 화이트리스트 + PIN 인증을 통과해야 대시보드가 열립니다.")
     st.stop()
+
+
+# 외부 호환 API 유지: app.py import 경로 변경 없이 모듈 분리본을 사용
+def get_auth_context() -> dict[str, Any]:
+    return get_auth_context_v2()
+
+
+def render_watermark_overlay() -> None:
+    render_watermark_overlay_v2()
