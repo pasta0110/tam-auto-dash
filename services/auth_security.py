@@ -29,6 +29,7 @@ SESSION_WHITELIST_ALERTED_UID = "auth_whitelist_alerted_uid"
 SESSION_ACCESS_LOGGED = "auth_access_logged"
 SESSION_COUNTDOWN_GEN = "auth_countdown_gen"
 SESSION_LAST_SECURITY_SIGNAL = "auth_last_security_signal"
+SESSION_LAST_ACTIVITY_EXTEND = "auth_last_activity_extend"
 
 
 def _new_countdown_generation() -> int:
@@ -209,6 +210,16 @@ def render_session_popup_and_autologout(until_ts: float, generation: int = 0) ->
       const endMs = {end_ms};
       const popupKey = "session_popup_" + endMs + "_{generation}";
 
+      function getNavWindow() {{
+        try {{
+          if (window.top && window.top.location) return window.top;
+        }} catch (e) {{}}
+        try {{
+          if (window.parent && window.parent.location) return window.parent;
+        }} catch (e) {{}}
+        return window;
+      }}
+
       function withParam(url, key, value) {{
         const u = new URL(url, window.location.origin);
         u.searchParams.set(key, value);
@@ -221,7 +232,8 @@ def render_session_popup_and_autologout(until_ts: float, generation: int = 0) ->
 
         if (remain <= 0) {{
           // 만료 시 자동 로그아웃 트리거
-          window.location.replace(withParam(window.location.href, "force_logout", "1"));
+          const w = getNavWindow();
+          w.location.replace(withParam(w.location.href, "force_logout", "1"));
           return;
         }}
 
@@ -229,7 +241,8 @@ def render_session_popup_and_autologout(until_ts: float, generation: int = 0) ->
           sessionStorage.setItem(popupKey, "1");
           const ok = window.confirm("세션이 1분 내 만료됩니다. 로그인 시간을 연장할까요?");
           if (ok) {{
-            window.location.replace(withParam(window.location.href, "extend_session", "1"));
+            const w = getNavWindow();
+            w.location.replace(withParam(w.location.href, "extend_session", "1"));
             return;
           }}
         }}
@@ -237,6 +250,80 @@ def render_session_popup_and_autologout(until_ts: float, generation: int = 0) ->
 
       tick();
       setInterval(tick, 1000);
+    }})();
+    </script>
+    """
+    components.html(html, height=0)
+
+
+def render_activity_session_extender(until_ts: float, generation: int = 0, throttle_sec: int = 30) -> None:
+    """
+    사용자 상호작용(클릭/터치/스크롤/키입력/마우스이동) 시 세션을 자동 연장한다.
+    과도한 rerun 방지를 위해 클라이언트에서 throttle을 건다.
+    """
+    try:
+        end_ms = int(float(until_ts) * 1000)
+    except Exception:
+        return
+    throttle_ms = max(5, int(throttle_sec)) * 1000
+    comp_id = f"session-activity-{generation}-{end_ms}"
+    html = f"""
+    <div id="{comp_id}" style="display:none;"></div>
+    <script>
+    (function() {{
+      const endMs = {end_ms};
+      const throttleMs = {throttle_ms};
+      const key = "last_activity_extend_{generation}";
+
+      function getNavWindow() {{
+        try {{
+          if (window.top && window.top.location) return window.top;
+        }} catch (e) {{}}
+        try {{
+          if (window.parent && window.parent.location) return window.parent;
+        }} catch (e) {{}}
+        return window;
+      }}
+
+      function getTargetDocument() {{
+        const w = getNavWindow();
+        try {{
+          if (w && w.document) return w.document;
+        }} catch (e) {{}}
+        return document;
+      }}
+
+      function withParam(url, k, v) {{
+        const u = new URL(url, window.location.origin);
+        u.searchParams.set(k, v);
+        return u.toString();
+      }}
+
+      function tryExtend() {{
+        const now = Date.now();
+        if (now >= endMs) return;
+        let last = 0;
+        try {{
+          last = Number(sessionStorage.getItem(key) || "0");
+        }} catch (e) {{}}
+        if (now - last < throttleMs) return;
+        try {{
+          sessionStorage.setItem(key, String(now));
+        }} catch (e) {{}}
+        const w = getNavWindow();
+        w.location.replace(withParam(w.location.href, "activity_extend", "1"));
+      }}
+
+      const d = getTargetDocument();
+      if (!d || d.getElementById("activity-extend-installed-{generation}")) return;
+      const mark = d.createElement("div");
+      mark.id = "activity-extend-installed-{generation}";
+      mark.style.display = "none";
+      d.body.appendChild(mark);
+
+      ["click", "touchstart", "scroll", "keydown", "mousemove", "pointerdown", "pointermove", "touchmove"].forEach(function(ev) {{
+        d.addEventListener(ev, tryExtend, {{ passive: true, capture: true }});
+      }});
     }})();
     </script>
     """
@@ -425,10 +512,10 @@ def _settings() -> dict[str, Any]:
         "whitelist_emails": set(x.lower() for x in _to_list(_sget("AUTH_KAKAO_WHITELIST_EMAILS", []))),
         "admin_ids": set(_to_list(_sget("AUTH_ADMIN_KAKAO_IDS", []))),
         "admin_emails": set(x.lower() for x in _to_list(_sget("AUTH_ADMIN_KAKAO_WHITELIST_EMAILS", []))),
-        # 요청 기본값: 일반 351037, 관리자 144883
-        "pin_user_code": str(_sget("AUTH_PIN_USER_CODE", _sget("AUTH_PIN_CODE", "351037"))).strip(),
+        # 보안 기본값 금지: 반드시 secrets/env로 주입
+        "pin_user_code": str(_sget("AUTH_PIN_USER_CODE", _sget("AUTH_PIN_CODE", ""))).strip(),
         "pin_user_sha256": str(_sget("AUTH_PIN_USER_SHA256", _sget("AUTH_PIN_SHA256", ""))).strip().lower(),
-        "pin_admin_code": str(_sget("AUTH_PIN_ADMIN_CODE", "144883")).strip(),
+        "pin_admin_code": str(_sget("AUTH_PIN_ADMIN_CODE", "")).strip(),
         "pin_admin_sha256": str(_sget("AUTH_PIN_ADMIN_SHA256", "")).strip().lower(),
         "pin_max_attempts": max(1, _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5)),
         "session_minutes": session_minutes,
@@ -648,6 +735,7 @@ def enforce_auth_gate() -> None:
     # query-param control hooks from client-side popup/autologout
     q_force = str(st.query_params.get("force_logout", "")).strip() == "1"
     q_extend = str(st.query_params.get("extend_session", "")).strip() == "1"
+    q_activity = str(st.query_params.get("activity_extend", "")).strip() == "1"
     if q_force:
         if st.session_state.get(SESSION_AUTH_USER):
             append_access_log("session_expired_logout", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
@@ -662,6 +750,15 @@ def enforce_auth_gate() -> None:
         st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
         append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
         _notify("session_extended", _client_meta())
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        st.rerun()
+    if q_activity and st.session_state.get(SESSION_AUTH):
+        # 사용자 활동 기반 자동 연장: 로그/알림은 남기지 않고 세션 만료와 카운트다운만 즉시 리셋
+        st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
         try:
             st.query_params.clear()
         except Exception:
@@ -693,8 +790,22 @@ def enforce_auth_gate() -> None:
                 st.session_state.get(SESSION_AUTH_UNTIL, 0),
                 generation=generation,
             )
+            render_activity_session_extender(
+                st.session_state.get(SESSION_AUTH_UNTIL, 0),
+                generation=generation,
+                throttle_sec=12,
+            )
             render_interaction_guard()
             render_capture_guard()
+            if st.button("세션 연장", key="auth_extend_btn", use_container_width=True):
+                st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+                st.session_state[SESSION_COUNTDOWN_GEN] = _new_countdown_generation()
+                append_access_log(
+                    "session_extended_manual",
+                    user={**user, "role": st.session_state.get(SESSION_AUTH_ROLE, "user")},
+                    meta={**_client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, ""), "detail": "sidebar_button"},
+                )
+                st.rerun()
             if st.button("로그아웃", key="auth_logout_btn"):
                 append_access_log(
                     "logout",
@@ -779,7 +890,7 @@ def enforce_auth_gate() -> None:
 
         attempts = int(st.session_state.get(SESSION_PIN_ATTEMPTS, 0))
         if attempts >= cfg["pin_max_attempts"]:
-            st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
+            st.error(f"PIN 실패 {cfg['pin_max_attempts']}회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
             append_access_log("pin_locked", user=pending, meta={**_client_meta_dict()})
             _notify("pin_locked", f"user={pending}\n{_client_meta()}")
             st.stop()
@@ -829,7 +940,7 @@ def enforce_auth_gate() -> None:
                 st.session_state[SESSION_PIN_ATTEMPTS] = attempts + 1
                 left = max(0, cfg["pin_max_attempts"] - st.session_state[SESSION_PIN_ATTEMPTS])
                 if left == 0:
-                    st.error("PIN 실패 5회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
+                    st.error(f"PIN 실패 {cfg['pin_max_attempts']}회 초과로 잠금되었습니다. 관리자에게 문의하세요.")
                 else:
                     st.error(f"PIN 불일치 (남은 시도: {left})")
                 append_access_log("pin_failed", user=pending, meta={**_client_meta_dict(), "detail": f"remain={left}"})
