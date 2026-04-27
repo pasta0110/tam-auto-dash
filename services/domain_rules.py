@@ -7,10 +7,21 @@ def cheongho_mask(df: pd.DataFrame) -> pd.Series:
     return df["매출처"].astype(str).str.strip().eq("청호나이스")
 
 
+def non_coolpad_mask(df: pd.DataFrame) -> pd.Series:
+    """
+    집계 제외 규칙:
+    - 상품명에 '쿨패드'가 포함된 모든 건 제외
+    """
+    if "상품명" not in df.columns:
+        return pd.Series(True, index=df.index)
+    return ~df["상품명"].astype(str).str.contains("쿨패드", na=False)
+
+
 def filter_cheongho(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
-    return df[cheongho_mask(df)].copy()
+    mask = cheongho_mask(df) & non_coolpad_mask(df)
+    return df[mask].copy()
 
 
 def str_col(df: pd.DataFrame, col: str) -> pd.Series:
@@ -49,4 +60,3 @@ def delivery_event_flags(df: pd.DataFrame) -> dict:
         "is_normal_complete": is_normal_complete,
         "is_normal_strict": is_normal_strict,
     }
-

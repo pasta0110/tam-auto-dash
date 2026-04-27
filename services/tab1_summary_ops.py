@@ -50,7 +50,7 @@ def filter_delivery_for_tab1(delivery_df: pd.DataFrame) -> pd.DataFrame:
     if "배송상태" in df.columns:
         mask &= ~df["배송상태"].astype(str).eq("미설치")
     if "상품명" in df.columns:
-        mask &= ~df["상품명"].astype(str).str.contains("쿨패드-", na=False)
+        mask &= ~df["상품명"].astype(str).str.contains("쿨패드", na=False)
     return df[mask].copy()
 
 
