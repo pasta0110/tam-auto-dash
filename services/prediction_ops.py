@@ -8,7 +8,12 @@ import pandas as pd
 from utils.date_utils import get_w_days
 
 
-def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -> tuple[list[dict], dict]:
+def build_tab3_prediction(
+    ana_df: pd.DataFrame,
+    ctx: dict,
+    centers: list[str],
+    delivery_df: pd.DataFrame | None = None,
+) -> tuple[list[dict], dict]:
     yesterday = ctx["yesterday"]
     today = ctx.get("today", datetime.date.today())
     m_key = ctx["m_key"]
@@ -18,6 +23,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
     total_w = get_w_days(m_start, m_end)
     passed_w = get_w_days(m_start, yesterday)
     remain_w = total_w - passed_w
+    is_month_end_today = today == m_end
 
     last_30_days_start = yesterday - timedelta(days=30)
     recent_30d_data = ana_df[
@@ -52,6 +58,24 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
     pred_rows = []
     center_set = set(ana_df["배송사_정제"].unique())
 
+    month_end_scheduled = pd.DataFrame()
+    if is_month_end_today and delivery_df is not None and not delivery_df.empty:
+        d = delivery_df.copy()
+        if "배송예정일_DT" not in d.columns:
+            d["배송예정일_DT"] = pd.to_datetime(d.get("배송예정일"), errors="coerce")
+
+        scheduled_mask = d["배송예정일_DT"].dt.date == today
+        if "주문유형" in d.columns:
+            scheduled_mask &= d["주문유형"].astype(str).str.contains("정상", na=False)
+        if "주문상태" in d.columns:
+            scheduled_mask &= ~d["주문상태"].astype(str).str.contains("주문취소", na=False)
+        if "배송유형" in d.columns:
+            scheduled_mask &= ~d["배송유형"].astype(str).str.contains("회수", na=False)
+        if "배송상태" in d.columns:
+            scheduled_mask &= ~d["배송상태"].astype(str).str.contains("미설치", na=False)
+
+        month_end_scheduled = d[scheduled_mask].copy()
+
     for v in centers:
         if v not in center_set:
             continue
@@ -67,7 +91,17 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         v_recent_count = len(recent_30d_data[recent_30d_data["배송사_정제"] == v])
 
         avg_30d = v_recent_count / recent_working_days if recent_working_days > 0 else 0
-        rem_pred = int(avg_30d * remain_w)
+        if is_month_end_today:
+            scheduled_today = len(month_end_scheduled[month_end_scheduled["배송사_정제"] == v]) if not month_end_scheduled.empty else 0
+            completed_today = len(
+                ana_df[
+                    (ana_df["배송사_정제"] == v)
+                    & (ana_df["배송예정일_DT"].dt.date == today)
+                ]
+            )
+            rem_pred = max(0, scheduled_today - completed_today)
+        else:
+            rem_pred = int(avg_30d * remain_w)
         projected = curr_act + rem_pred
         final_pred = _adjust_prediction(projected)
 
@@ -82,7 +116,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
                 "배송사": v,
                 "현재 실적(당월)": f"{curr_act} 건 (오늘 {today_inc}건 ↑)",
                 "최근 30일 평균": f"{avg_30d:.1f} 건/일",
-                f"남은 영업일 예상({remain_w}일)": f"{rem_pred} 건",
+                ("말일 잔여 예상" if is_month_end_today else f"남은 영업일 예상({remain_w}일)"): f"{rem_pred} 건",
                 "당월 예측": f"{projected} 건",
                 "최종 예측": f"{final_pred} 건",
             }
@@ -94,7 +128,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
             "배송사": "📌 합계",
             "현재 실적(당월)": f"{sum_curr} 건 (오늘 {sum_today_inc}건 ↑)",
             "최근 30일 평균": f"{sum_avg:.1f} 건/일",
-            f"남은 영업일 예상({remain_w}일)": f"{sum_remain} 건",
+            ("말일 잔여 예상" if is_month_end_today else f"남은 영업일 예상({remain_w}일)"): f"{sum_remain} 건",
             "당월 예측": f"{sum_total} 건",
             "최종 예측": f"{final_sum_total} 건",
         }
@@ -106,6 +140,7 @@ def build_tab3_prediction(ana_df: pd.DataFrame, ctx: dict, centers: list[str]) -
         "query_working_day_num": query_working_day_num,
         "historical_accuracy": historical_accuracy,
         "historical_months": len(hist_df),
+        "month_end_mode": is_month_end_today,
     }
     return pred_rows, meta
 

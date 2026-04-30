@@ -175,7 +175,7 @@ if raw_order_df is not None and raw_delivery_df is not None:
     elif selected_view == "⚠️ 2.5 운영 예외 큐":
         tab2_5_exception.render(delivery_df, ctx, cache_key=cache_key)
     elif selected_view == "🚀 3. 당월 출고 예측":
-        tab3_prediction.render(ana_df, ctx, cache_key=cache_key)
+        tab3_prediction.render(ana_df, ctx, cache_key=cache_key, delivery_df=delivery_df)
     elif selected_view == "🔍 4. 예측 모델 검증":
         tab4_validation.render(ana_df, ctx, cache_key=cache_key)
     elif selected_view == "🛠 6. 사용기록 관리" and auth_ctx.get("role") == "admin":

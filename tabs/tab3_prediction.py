@@ -6,7 +6,7 @@ import pandas as pd
 from config import V_ORDER
 from services.prediction_ops import build_tab3_prediction
 
-def render(ana_df, ctx, cache_key=None):
+def render(ana_df, ctx, cache_key=None, delivery_df=None):
     """
     당월 출고 예측 탭 렌더링
     """
@@ -16,12 +16,18 @@ def render(ana_df, ctx, cache_key=None):
     yesterday_str = ctx['yesterday_str']
     state_key = f"tab3_prediction::{cache_key}::{ctx.get('m_key')}::{ctx.get('yesterday_str')}"
     if state_key not in st.session_state:
-        st.session_state[state_key] = build_tab3_prediction(ana_df, ctx, V_ORDER)
+        st.session_state[state_key] = build_tab3_prediction(ana_df, ctx, V_ORDER, delivery_df=delivery_df)
     pred_rows, meta = st.session_state[state_key]
     hist_acc = meta.get("historical_accuracy")
     q_day = meta.get("query_working_day_num")
     hist_months = meta.get("historical_months", 0)
-    if hist_acc:
+    if meta.get("month_end_mode"):
+        acc_text = f"{hist_acc:.1f}%, {hist_months}개월" if hist_acc else "데이터 부족"
+        st.info(
+            f"💡 말일 특수 기준입니다. 배송예정일이 오늘인 물량에서 오늘 완료분을 제외해 남은 물량을 계산합니다. "
+            f"역대 {q_day}영업일차 평균 정확도({acc_text})는 '최종 예측' 보정에 반영합니다."
+        )
+    elif hist_acc:
         st.info(
             f"💡 최근 30일 영업일 {meta['recent_working_days']}일의 실적을 반영해 '당월 예측'을 계산하고, "
             f"역대 {q_day}영업일차 평균 정확도({hist_acc:.1f}%, {hist_months}개월)로 '최종 예측'을 보정합니다."
