@@ -775,6 +775,23 @@ def _session_seconds_for_role(cfg: dict[str, Any], role: str | None) -> int:
     return max(1, minutes) * 60
 
 
+def _normalize_admin_session_until(cfg: dict[str, Any]) -> None:
+    role = str(st.session_state.get(SESSION_AUTH_ROLE, "user")).strip().lower()
+    if role != "admin":
+        return
+    now = time.time()
+    target_seconds = _session_seconds_for_role(cfg, "admin")
+    normal_seconds = _session_seconds_for_role(cfg, "user")
+    try:
+        current_until = float(st.session_state.get(SESSION_AUTH_UNTIL, 0) or 0)
+    except Exception:
+        current_until = 0
+    remaining = current_until - now
+    if 0 < remaining <= normal_seconds + 60:
+        st.session_state[SESSION_AUTH_UNTIL] = now + target_seconds
+        st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
+
+
 def enforce_auth_gate() -> None:
     cfg = get_auth_settings()
     if not cfg["enabled"]:
@@ -817,6 +834,7 @@ def enforce_auth_gate() -> None:
 
     # already authed and alive
     if st.session_state.get(SESSION_AUTH) and time.time() < float(st.session_state.get(SESSION_AUTH_UNTIL, 0)):
+        _normalize_admin_session_until(cfg)
         user = st.session_state.get(SESSION_AUTH_USER) or {}
         sid = str(st.session_state.get(SESSION_AUTH_SID, ""))
         consume_security_signal_v2(user=user, sid=sid)
