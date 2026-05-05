@@ -45,6 +45,9 @@ def get_auth_settings() -> dict[str, Any]:
     session_minutes = _to_int(_sget("AUTH_SESSION_MINUTES", 10), 10)
     if session_minutes <= 0:
         session_minutes = max(1, _to_int(_sget("AUTH_SESSION_HOURS", 12), 12) * 60)
+    admin_session_minutes = _to_int(_sget("AUTH_ADMIN_SESSION_MINUTES", 0), 0)
+    if admin_session_minutes <= 0:
+        admin_session_minutes = max(1, _to_int(_sget("AUTH_ADMIN_SESSION_HOURS", 12), 12) * 60)
 
     cfg = {
         "enabled": _to_bool(_sget("AUTH_ENABLED", False), False),
@@ -61,6 +64,7 @@ def get_auth_settings() -> dict[str, Any]:
         "pin_admin_sha256": str(_sget("AUTH_PIN_ADMIN_SHA256", "")).strip().lower(),
         "pin_max_attempts": max(1, _to_int(_sget("AUTH_PIN_MAX_ATTEMPTS", 5), 5)),
         "session_minutes": session_minutes,
+        "admin_session_minutes": admin_session_minutes,
         "state_secret": str(_sget("AUTH_STATE_SECRET", "")).strip(),
     }
     cfg["whitelist_ids"] = set(cfg["whitelist_ids"]) | set(cfg["admin_ids"])

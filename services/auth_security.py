@@ -764,6 +764,17 @@ def render_watermark_overlay() -> None:
     )
 
 
+def _session_seconds_for_role(cfg: dict[str, Any], role: str | None) -> int:
+    role_key = str(role or "user").strip().lower()
+    cfg_key = "admin_session_minutes" if role_key == "admin" else "session_minutes"
+    fallback_minutes = 720 if role_key == "admin" else 10
+    try:
+        minutes = int(cfg.get(cfg_key, fallback_minutes) or fallback_minutes)
+    except Exception:
+        minutes = fallback_minutes
+    return max(1, minutes) * 60
+
+
 def enforce_auth_gate() -> None:
     cfg = get_auth_settings()
     if not cfg["enabled"]:
@@ -783,7 +794,8 @@ def enforce_auth_gate() -> None:
             pass
         st.rerun()
     if q_extend and st.session_state.get(SESSION_AUTH):
-        st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        role = str(st.session_state.get(SESSION_AUTH_ROLE, "user"))
+        st.session_state[SESSION_AUTH_UNTIL] = time.time() + _session_seconds_for_role(cfg, role)
         st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
         append_access_log("session_extended", user=st.session_state.get(SESSION_AUTH_USER), meta={**client_meta_dict(), "sid": st.session_state.get(SESSION_AUTH_SID, "")})
         notify("session_extended", client_meta())
@@ -794,7 +806,8 @@ def enforce_auth_gate() -> None:
         st.rerun()
     if q_activity and st.session_state.get(SESSION_AUTH):
         # 사용자 활동 기반 자동 연장: 로그/알림은 남기지 않고 세션 만료와 카운트다운만 즉시 리셋
-        st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+        role = str(st.session_state.get(SESSION_AUTH_ROLE, "user"))
+        st.session_state[SESSION_AUTH_UNTIL] = time.time() + _session_seconds_for_role(cfg, role)
         st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
         try:
             st.query_params.clear()
@@ -835,7 +848,8 @@ def enforce_auth_gate() -> None:
             render_interaction_guard()
             render_capture_guard()
             if st.button("세션 연장", key="auth_extend_btn", use_container_width=True):
-                st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+                role = str(st.session_state.get(SESSION_AUTH_ROLE, "user"))
+                st.session_state[SESSION_AUTH_UNTIL] = time.time() + _session_seconds_for_role(cfg, role)
                 st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
                 append_access_log(
                     "session_extended_manual",
@@ -964,7 +978,7 @@ def enforce_auth_gate() -> None:
                 st.session_state[SESSION_AUTH_USER] = pending
                 st.session_state[SESSION_AUTH_ROLE] = login_role
                 st.session_state[SESSION_AUTH_SID] = sid
-                st.session_state[SESSION_AUTH_UNTIL] = time.time() + (cfg["session_minutes"] * 60)
+                st.session_state[SESSION_AUTH_UNTIL] = time.time() + _session_seconds_for_role(cfg, login_role)
                 st.session_state[SESSION_PIN_ATTEMPTS] = 0
                 st.session_state[SESSION_ACCESS_LOGGED] = False
                 st.session_state[SESSION_COUNTDOWN_GEN] = new_countdown_generation()
